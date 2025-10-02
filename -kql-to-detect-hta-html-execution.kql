@@ -1,0 +1,26 @@
+
+// KQL to detect hta execution
+DeviceProcessEvents
+| where FileName == "mshta.exe"
+  and InitiatingProcessFileName == "explorer.exe"
+  and ProcessCommandLine has ".hta"
+| project
+    Timestamp,
+    DeviceName,
+    DeviceId,
+    AccountDomain,
+    AccountName,
+    InitiatingProcessFileName,
+    ProcessCommandLine,
+    FolderPath = tostring(split(ProcessCommandLine, "\"")[0])
+| extend HTAFile = extract(@"\S+\.hta", 0, ProcessCommandLine)
+| where isnotempty(HTAFile)
+| project
+    Timestamp,
+    DeviceName,
+    DeviceId,
+    User = strcat(AccountDomain, "\\", AccountName),
+    HTAFile,
+    InitiatingProcessFileName,
+    ProcessCommandLine
+| order by Timestamp desc
