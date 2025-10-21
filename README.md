@@ -1,3 +1,8 @@
+🦅═════════════════════════════════════════════════════════════════════════════🦅
+              🛡 CYBERHAWK THREAT INTEL | MICROSOFT SENTINEL KQL 🛡
+🦅═════════════════════════════════════════════════════════════════════════════🦅
+
+````
 
 ---
 
@@ -14,7 +19,9 @@
 Welcome to **CyberHawk Threat Intel – Sentinel KQL Queries**, a curated collection of **Microsoft Sentinel** detection and hunting queries crafted for **real-world adversary simulation and defense**.  
 This repo empowers **SOC analysts, threat hunters, and cyber defenders** to detect, investigate, and respond to modern cyber threats efficiently.
 
-> 💬 *"They can't exploit you if you are the exploit."* — **CyberHawk Consultancy**
+### 🦅 CyberHawk Consultancy
+
+**"Hacking with Integrity, Defending with Precision"**
 
 ---
 
@@ -29,15 +36,50 @@ This repo empowers **SOC analysts, threat hunters, and cyber defenders** to dete
 | 💣 **Exfiltration & Impact** | Ransomware, data staging, shadow copy deletion |
 | 📘 **Hunting Queries** | IOC sweeps, anomaly analysis, behavioral hunting |
 
+````
+
 ---
 
-## 🧩 Example Query
+## 🧭 How to Use
 
-```kql
-// Detect potential credential dumping via LSASS access
-SecurityEvent
-| where EventID == 10 and ProcessName contains "lsass.exe"
-| extend TargetProcess = tostring(Process)
-| summarize Count = count() by Computer, TargetProcess, Account
-| where Count > 5
-| project TimeGenerated, Computer, Account, TargetProcess, Count
+1. Clone or fork the repo:
+
+   ```bash
+   git clone https://github.com/<your-username>/sentinel-kql-queries.git
+   ```
+2. Open **Microsoft Sentinel → Logs**
+3. Paste any `.kql` file content into your query editor
+4. Adjust workspace tables if required
+5. Run, visualize, and customize alerts 🚨
+
+---
+
+## 🌐 Connect with CyberHawk
+
+Stay updated with **live threat intel, Sentinel detections, and cybersecurity tutorials** across platforms:
+
+* 📣 **[Telegram – @cyberhawkthreatintel](https://t.me/cyberhawkthreatintel)** — Live Threat Feeds & SOC Insights
+* 🎬 **[YouTube – CyberHawk Consultancy](https://www.youtube.com/@cyberhawkconsultancy)** — Deep Dives & Walkthroughs
+* 🎭 **[TikTok – @cyberhawkthreatintel](https://www.tiktok.com/@cyberhawkthreatintel)** — Quick Intel & Cyber Humor
+
+> 🦅 Follow for weekly KQL drops, advanced hunting tips, and real-world attack breakdowns!
+
+---
+
+## 💌 Contributions
+
+🔹 Fork the repo
+🔹 Add or improve your favorite detections
+🔹 Submit a **Pull Request** — let’s make defenders stronger together 💪
+
+---
+
+## ⚡ Disclaimer
+
+All detections, queries, and scripts shared here are for **educational and ethical cybersecurity research**.
+Unauthorized or malicious use is **strictly prohibited**.
+Use responsibly — stay ethical, stay sharp, stay **CyberHawk**. 🦅
+
+---
+
+
