@@ -2,10 +2,6 @@
               🛡 CYBERHAWK THREAT INTEL | MICROSOFT SENTINEL KQL 🛡
 🦅═════════════════════════════════════════════════════════════════════════════🦅
 
-````
-
----
-
 ![Built with KQL](https://img.shields.io/badge/Built%20with-KQL-blue?style=for-the-badge&logo=microsoft)
 ![MITRE ATT&CK](https://img.shields.io/badge/Mapped%20to-MITRE%20ATT%26CK-orange?style=for-the-badge&logo=mitre)
 ![SOC Ready](https://img.shields.io/badge/Optimized%20for-SOC%20Operations-purple?style=for-the-badge)
@@ -35,10 +31,6 @@ This repo empowers **SOC analysts, threat hunters, and cyber defenders** to dete
 | 📡 **Command & Control** | Beaconing, DNS tunneling, persistence |
 | 💣 **Exfiltration & Impact** | Ransomware, data staging, shadow copy deletion |
 | 📘 **Hunting Queries** | IOC sweeps, anomaly analysis, behavioral hunting |
-
-````
-
----
 
 ## 🧭 How to Use
 
