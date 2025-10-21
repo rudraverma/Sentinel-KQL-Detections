@@ -1,0 +1,68 @@
+let allowedApplication = 'Microsoft-WindowsAzure-Frontdoor';
+let allowedSecMonResources = dynamic([
+    'Microsoft.Insights/workbooks',
+    'Microsoft.Insights/workbooktemplate',
+    'Microsoft.Insights/components',
+    'Microsoft.Insights/dataCollectionRules',
+    'Microsoft.Insights/dataCollectionEndpoints',
+    'Microsoft.Insights/dataCollectionRuleAssociations',
+    'Microsoft.Insights/metricAlerts',
+    'Microsoft.Insights/webtests',
+    'Microsoft.KeyVault/vaults',
+    'Microsoft.KeyVault/vaults/accessPolicies',
+    'Microsoft.ManagedIdentity/userAssignedIdentities',
+    'Microsoft.Network/applicationGateways',
+    'Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies',
+    'Microsoft.Network/publicIPAddresses',
+    'Microsoft.OperationalInsights/queryPacks',
+    'Microsoft.OperationalInsights/queryPacks/queries',
+    'Microsoft.OperationalInsights/workspaces/savedSearches',
+    'Microsoft.OperationalInsights/workspaces/tables',
+    'Microsoft.Resources/deployments',
+    'Microsoft.SecurityInsights/alertRules',
+    'Microsoft.SecurityInsights/automationRules',
+    'Microsoft.SecurityInsights/watchlists',
+    'Microsoft.Storage/storageAccounts',
+    'Microsoft.Storage/storageAccounts/blobServices',
+    'Microsoft.Storage/storageAccounts/blobServices/containers',
+    'Microsoft.Compute/virtualMachines',
+    'Microsoft.Compute/virtualMachines/extensions',
+    'Microsoft.Compute/virtualMachines/runCommands'
+    ]);
+let allowedSecSoarResources = dynamic([
+    'Microsoft.CognitiveServices/accounts',
+    'Microsoft.CognitiveServices/accounts/deployments',
+    'Microsoft.Insights/components',
+    'Microsoft.Insights/diagnosticSettings',
+    'Microsoft.KeyVault/vaults',
+    'Microsoft.Logic/workflows',
+    'Microsoft.Resources/deployments',
+    'Microsoft.Resources/subscriptions/resourcegroups',
+    'Microsoft.SecurityInsights/automationRules',
+    'Microsoft.Storage/storageAccounts',
+    'Microsoft.Storage/storageAccounts/blobServices',
+    'Microsoft.Storage/storageAccounts/blobServices/containers',
+    'Microsoft.Web/connections',
+    'Microsoft.Web/serverfarms',
+    'Microsoft.Web/sites',
+    'Microsoft.Web/sites/host'
+    ]);
+let ResourceAppEvents = CloudAppEvents
+    | where ObjectType == "Resource"
+    | extend
+        ActorName = tostring(ActivityObjects[5].Name),
+        ActorType = tostring(ActivityObjects[5].Type),
+        ProviderName = tostring(RawEventData.ProviderName),
+        ResourceType = tostring(ActivityObjects[1].Name)
+    | where ActorType == 'Account';
+ResourceAppEvents
+| where (ActorName contains '*username*' and ResourceType !in~ (allowedSecMonResources)) or (ActorName contains '*username*' and ResourceType !in~ (allowedSecSoarResources))
+| where ProviderName !~ allowedApplication or not(ResourceType =~ 'Microsoft.Resources/' and ActionType =~ 'NotifyResourceJobs Microsoft.Resources')
+| project
+    TimeGenerated,
+    ResourceType,
+    ServiceConnectionCustomEntity = ActorName,
+    AzureResourceCustomEntity = ObjectId,
+    CloudApplicationCustomEntity = ProviderName,
+    IPAddressCustomEntity = IPAddress,
+    ActionType
