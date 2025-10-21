@@ -1,0 +1,59 @@
+// Name: Suspicious Command Executed from Run Dialog (ClickFix Technique)
+// Description: Detects suspicious commands written to the RunMRU registry key. This key stores the history of commands executed via the Windows Run dialog (Win+R), a common execution vector for the "ClickFix" social engineering technique where users are tricked into pasting and running malicious commands.
+// False Positive Sensitivity: Medium. System administrators may use the Run dialog for legitimate tasks involving PowerShell, mshta, or curl. Review the full command line for malicious indicators like obfuscation, download cradles, or unusual domains. Consider tuning by excluding known administrative commands or specific users if false positives occur.
+// References: https://www.microsoft.com/en-us/security/blog/2025/08/21/think-before-you-clickfix-analyzing-the-clickfix-social-engineering-technique/
+
+DeviceRegistryEvents
+// Filter for modifications to the RunMRU key, initiated by explorer.exe (the parent of the Run dialog).
+| where ActionType == "RegistryValueSet"
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where RegistryKey endswith @"\Explorer\RunMRU" and RegistryValueName != "MRUList"
+| extend Command = RegistryValueData
+// Define sets of suspicious indicators based on the ClickFix technique.
+| extend isFakeVerification = Command has_any (
+    "✅", "✔️", "I am not a robot", "reCAPTCHA Verification", "CAPTCHA Verification",
+    "Cloud identificator", "Human, not a robot", "Microsoft Defender Services Secure Access", "MacOS Verification"
+)
+| extend isSuspiciousPS = (Command has "powershell" or Command has "pwsh") and Command has_any (
+    "IEX", "Invoke-Expression", "IWR", "Invoke-WebRequest", "IRM", "Invoke-RestMethod",
+    "DownloadString", "DownloadFile", "FromBase64String", "System.Net.WebClient",
+    "-e ", "-en ", "-enc ", "-encoded", // PowerShell encoded command flags.
+    "[char]", "'+'", // Indicators of string obfuscation.
+    "hidden", "-w h", "-Window.HID", // Hiding the PowerShell window.
+    "[System.IO.Path]::Combine", "[scriptblock]"
+)
+| extend isSuspiciousMshta = Command has "mshta" and Command has_any ("http", "javascript:", "vbscript:")
+| extend isSuspiciousWscript = Command has "wscript" and Command has_any ("http", ".vbs", ".js")
+| extend isSuspiciousDownloadUtil = (Command has "curl" or Command has "wget") and Command has_any ("-o ", "-O ", "|", ">") // Look for output to a file or piping.
+| extend isSuspiciousRundll32 = Command has "rundll32" and Command has_any ("http", "javascript:", "vbscript:")
+| extend isSuspiciousBitsadmin = Command has "bitsadmin" and Command has_any ("/transfer", "/create")
+| extend isSshProxyAbuse = Command has "ssh.exe" and Command has "ProxyCommand" // Detects abuse of ssh.exe to proxy commands.
+| extend isObfuscatedCmd = (
+    (Command has "cmd" and (countof(Command, "^") > 2 or countof(Command, "cmd.exe /c") > 2)) or // Detects caret obfuscation or LOLBIN stacking.
+    (Command matches regex @"[-/–][Ee^]{1,2}[NnCcOoDdEeMmAa^]*\s[A-Za-z0-9+/=]{15,}")
+)
+// Combine all suspicious conditions to identify potential ClickFix activity.
+| where isFakeVerification
+    or isSuspiciousPS
+    or isSuspiciousMshta
+    or isSuspiciousWscript
+    or isSuspiciousDownloadUtil
+    or isSuspiciousRundll32
+    or isSuspiciousBitsadmin
+    or isSshProxyAbuse
+    or isObfuscatedCmd
+| project
+    Timestamp,
+    DeviceName,
+    Command,
+    RegistryKey,
+    InitiatingProcessFileName,
+    isFakeVerification,
+    isSuspiciousPS,
+    isSuspiciousMshta,
+    isSuspiciousWscript,
+    isSuspiciousDownloadUtil,
+    isSuspiciousRundll32,
+    isSuspiciousBitsadmin,
+    isSshProxyAbuse,
+    isObfuscatedCmd
