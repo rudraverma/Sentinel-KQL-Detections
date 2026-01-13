@@ -1,0 +1,55 @@
+// Name: Malicious Chrome Extension C2 Communication
+// Author: CyberHawk Threat Intel
+// Date: 2026-01-13
+// Description: This rule detects network connections to command-and-control (C2) domains associated with malicious Chrome extensions known to steal ChatGPT and DeepSeek conversations, as well as other browsing data.
+// False Positive Sensitivity: Medium
+// References: https://www.ox.security/blog/malicious-chrome-extensions-steal-chatgpt-deepseek-conversations/
+// Tactics: Command and Control, Exfiltration
+// Techniques: T1071.001, T1041
+let MaliciousC2Domains = dynamic([
+    "deepaichats.com",
+    "chatsaigpt.com"
+]);
+// Define the lookback period for the search.
+let Lookback = 1d;
+(union isfuzzy=true
+    (
+        DeviceNetworkEvents
+        | where Timestamp > ago(Lookback)
+        // Look for connections to the known malicious C2 domains.
+        | where RemoteUrl has_any (MaliciousC2Domains) or RemoteDomain has_any (MaliciousC2Domains)
+        // Potential for false positives is low as these are specific IOCs.
+        // However, to increase fidelity, you could filter for common browser processes.
+        // | where InitiatingProcessFileName has_any ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe")
+        | extend EventType = "DeviceNetworkEvents"
+        | project
+            TimeGenerated = Timestamp, // Rename Timestamp for consistency with other data sources
+            DeviceName,
+            InitiatingProcessFileName,
+            RemoteUrl,
+            RemoteIP,
+            ActionType
+    ),
+    (
+        DnsEvents
+        | where TimeGenerated > ago(Lookback)
+        // Look for DNS queries for the malicious domains.
+        | where Name has_any (MaliciousC2Domains)
+        | extend EventType = "DnsEvents"
+        | project
+            TimeGenerated,
+            DeviceName,
+            InitiatingProcessFileName = ClientProcessName,
+            RemoteUrl = Name,
+            RemoteIP = IPAddresses,
+            ActionType = "DnsQuery"
+    )
+)
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    make_set(InitiatingProcessFileName),
+    make_set(RemoteUrl),
+    make_set(RemoteIP),
+    make_set(EventType)
+    by DeviceName, ActionType
