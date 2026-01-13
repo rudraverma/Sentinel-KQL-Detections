@@ -1,0 +1,35 @@
+// Name: Malicious Chrome Extension Installation
+// Author: CyberHawk Threat Intel
+// Date: 2026-01-13
+// Description: Detects the installation of malicious Chrome extensions known to steal ChatGPT/DeepSeek conversations by looking for the creation of files in directories named with the malicious extension IDs.
+// False Positive Sensitivity: Medium
+// References: https://www.ox.security/blog/malicious-chrome-extensions-steal-chatgpt-deepseek-conversations/
+// Tactics: Execution
+// Techniques: T1204
+let MaliciousExtensionIDs = dynamic([
+    "fnmihdojmnkclgjpcoonokmkhjpjechg",
+    "inhcgfpbfdjbjogdfjbclgolkmhnooop"
+]);
+// Define the lookback period for the search.
+let Lookback = 1d;
+DeviceFileEvents
+| where TimeGenerated > ago(Lookback)
+// Focus on file creation events, which indicate installation.
+| where ActionType == "FileCreated"
+// The extension ID is part of the folder path where the extension's files are stored.
+| where FolderPath has_any (MaliciousExtensionIDs)
+// This detection is based on specific IOCs (extension IDs), so the risk of false positives is low.
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    MaliciousExtensionID = take_any(extract("([a-z]{32})", 1, FolderPath)),
+    FileSamples = make_set(FileName, 5),
+    InitiatingProcess = take_any(InitiatingProcessFileName)
+    by DeviceName
+| project-reorder
+    StartTime,
+    EndTime,
+    DeviceName,
+    InitiatingProcess,
+    MaliciousExtensionID,
+    FileSamples
