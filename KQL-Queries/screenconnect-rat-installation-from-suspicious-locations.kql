@@ -1,0 +1,24 @@
+// Detection: ScreenConnect RAT Installation
+// Detect ScreenConnect client installation from suspicious locations
+DeviceProcessEvents
+| where TimeGenerated > ago(30d)
+| where ProcessCommandLine has_any ("ScreenConnect", "083e4d30c7ea44f7")
+    or FolderPath has "ScreenConnect Client"
+    or FileName =~ "ScreenConnect.ClientService.exe"
+| extend SuspiciousPath = iff(
+    FolderPath has_any (@"\Temp", @"\AppData\Local\Temp", @"\Downloads"),
+    "High Risk",
+    iff(FolderPath has @"Program Files (x86)\ScreenConnect Client", "Medium Risk", "Low Risk")
+)
+| project 
+    TimeGenerated,
+    DeviceName, 
+    AccountName, 
+    FileName, 
+    FolderPath, 
+    ProcessCommandLine, 
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    SuspiciousPath,
+    SHA256
+| order by TimeGenerated desc
