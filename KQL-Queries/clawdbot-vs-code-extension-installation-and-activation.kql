@@ -1,0 +1,20 @@
+// Detect ClawdBot extension installation and activation
+DeviceFileEvents
+| where Timestamp > ago(30d)
+| where FolderPath has_any (@".vscode\extensions\clawdbot", @"AppData\Local\Programs\Microsoft VS Code")
+| where FileName in~ ("extension.js", "package.json", "run.bat")
+| extend ExtensionPath = FolderPath
+| join kind=inner (
+    DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where ProcessCommandLine has_any ("Code.exe", "code.exe")
+) on DeviceId
+| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName
+| summarize 
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp),
+    FileCount = count(),
+    UniqueFiles = make_set(FileName)
+    by DeviceName, AccountName, FolderPath
+| where FileCount >= 2
+| order by FirstSeen desc
