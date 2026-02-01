@@ -1,77 +1,96 @@
-🦅═════════════════════════════════════════════════════════════════════════════🦅
-              🛡 CYBERHAWK THREAT INTEL | MICROSOFT SENTINEL KQL 🛡
-🦅═════════════════════════════════════════════════════════════════════════════🦅
+```markdown
+🦅═══════════════════════════════════════════════════════════════════════🦅
+           🛡️ CYBERHAWK THREAT INTEL | MICROSOFT SENTINEL KQL 🛡️
+🦅═══════════════════════════════════════════════════════════════════════🦅
 
 ![Built with KQL](https://img.shields.io/badge/Built%20with-KQL-blue?style=for-the-badge&logo=microsoft)
-![MITRE ATT&CK](https://img.shields.io/badge/Mapped%20to-MITRE%20ATT%26CK-orange?style=for-the-badge&logo=mitre)
-![SOC Ready](https://img.shields.io/badge/Optimized%20for-SOC%20Operations-purple?style=for-the-badge)
-![Ethical Hacking](https://img.shields.io/badge/Ethical%20Hacking-Yes-green?style=for-the-badge)
-![CyberHawk Consultancy](https://img.shields.io/badge/🦅-CyberHawk%20Consultancy-black?style=for-the-badge)
+![MITRE ATT&CK](https://img.shields.io/badge/MITRE%20ATT%26CK-Mapped-orange?style=for-the-badge)
+![SOC Ready](https://img.shields.io/badge/SOC-Ready-purple?style=for-the-badge)
+![Threat Intel](https://img.shields.io/badge/Threat-Intelligence-red?style=for-the-badge)
 
 ---
 
-# 🧠 About This Repo
+## 🎯 What's Inside
 
-Welcome to **CyberHawk Threat Intel – Sentinel KQL Queries**, a curated collection of **Microsoft Sentinel** detection and hunting queries crafted for **real-world adversary simulation and defense**.  
-This repo empowers **SOC analysts, threat hunters, and cyber defenders** to detect, investigate, and respond to modern cyber threats efficiently.
+**Production-ready Microsoft Sentinel KQL queries** mapped to **MITRE ATT&CK** for 
+real-world threat detection, hunting, and incident response.
 
-### 🦅 CyberHawk Consultancy
-
-**"Hacking with Integrity, Defending with Precision"**
+Built by SOC analysts, for SOC analysts. No fluff. Just detections that work.
 
 ---
 
-## ⚔️ Categories
+## 🔥 Detection Categories
 
-| Category | Focus Area |
-|-----------|-------------|
-| 🩸 **Initial Access** | Phishing, malicious scripts, exploit detections |
-| 🔒 **Privilege Escalation** | Token abuse, admin misuse, credential theft |
-| 🕶 **Defense Evasion** | Obfuscated scripts, tampering, log deletion |
-| 📡 **Command & Control** | Beaconing, DNS tunneling, persistence |
-| 💣 **Exfiltration & Impact** | Ransomware, data staging, shadow copy deletion |
-| 📘 **Hunting Queries** | IOC sweeps, anomaly analysis, behavioral hunting |
+| 🎯 Initial Access | 🔓 Execution | 🔒 Persistence | ⬆️ Privilege Escalation |
+|-------------------|--------------|----------------|-------------------------|
+| 🕶️ Defense Evasion | 🔑 Credential Access | 🔍 Discovery | 🏃 Lateral Movement |
+| 📡 Command & Control | 💾 Collection | 📤 Exfiltration | 💣 Impact |
 
-## 🧭 How to Use
+**🔎 Plus Advanced Threat Hunting Queries**
 
-1. Clone or fork the repo:
+---
 
-   ```bash
-   git clone https://github.com/<your-username>/sentinel-kql-queries.git
-   ```
-2. Open **Microsoft Sentinel → Logs**
-3. Paste any `.kql` file content into your query editor
-4. Adjust workspace tables if required
-5. Run, visualize, and customize alerts 🚨
+## 🚀 Quick Start
+
+```bash
+# Clone the repo
+git clone https://github.com/<your-username>/sentinel-kql-queries.git
+
+# Pick a detection category
+cd 05-DefenseEvasion
+
+# Copy KQL → Sentinel Logs → Run → Create Alert Rule
+```
+
+**Deploy in minutes. Detect in seconds.**
 
 ---
 
 ## 🌐 Connect with CyberHawk
 
-Stay updated with **live threat intel, Sentinel detections, and cybersecurity tutorials** across platforms:
+🔗 **[CyberHawk Web App - Sign Up FREE](https://cyberhawk.base44.app)**
 
-* 📣 **[Telegram – @cyberhawkthreatintel](https://t.me/cyberhawkthreatintel)** — Live Threat Feeds & SOC Insights
-* 🎬 **[YouTube – CyberHawk Consultancy](https://www.youtube.com/@cyberhawkconsultancy)** — Deep Dives & Walkthroughs
-* 🎭 **[TikTok – @cyberhawkthreatintel](https://www.tiktok.com/@cyberhawkthreatintel)** — Quick Intel & Cyber Humor
+📺 **YouTube**: [@cyberhawkconsultancy](https://youtube.com/@cyberhawkconsultancy) | [@cyberhawkk](https://youtube.com/@cyberhawkk)  
+🎵 **TikTok**: [@cyberhawkthreatintel](https://tiktok.com/@cyberhawkthreatintel)  
+𝕏 **Twitter**: [@cyberhawkintel](https://x.com/@cyberhawkintel)  
+💬 **Telegram**: [@cyberhawkthreatintel](https://t.me/cyberhawkthreatintel)
 
-> 🦅 Follow for weekly KQL drops, advanced hunting tips, and real-world attack breakdowns!
+> 🦅 **Weekly KQL drops | Threat breakdowns | Malware analysis | SOC tips**
 
 ---
 
-## 💌 Contributions
+## 💡 Why This Repo?
 
-🔹 Fork the repo
-🔹 Add or improve your favorite detections
-🔹 Submit a **Pull Request** — let’s make defenders stronger together 💪
+✅ **MITRE ATT&CK Mapped** – Every query tagged with tactics & techniques  
+✅ **False Positive Guidance** – Real-world tuning recommendations  
+✅ **Entity Mapped** – Ready for Sentinel incident enrichment  
+✅ **Performance Optimized** – Tested on production SOCs  
+✅ **Community Driven** – PRs welcome, detection engineers unite  
+
+---
+
+## 🤝 Contribute
+
+Got a killer detection rule? Share it!
+
+1. Fork → Add query → Follow format → PR  
+2. Include: Description | MITRE mapping | False positives | References
+
+**Make defenders stronger together.** 💪
 
 ---
 
 ## ⚡ Disclaimer
 
-All detections, queries, and scripts shared here are for **educational and ethical cybersecurity research**.
-Unauthorized or malicious use is **strictly prohibited**.
-Use responsibly — stay ethical, stay sharp, stay **CyberHawk**. 🦅
+**Educational & authorized security research only.**  
+Test before production. Tune for your environment. Use responsibly.
 
 ---
 
+🦅 **CyberHawk Consultancy** | *Hacking with Integrity, Defending with Precision*
 
+**#cyberhawkthreatintel #cyberhawkconsultancy #cyberhawkk**
+
+⭐ **Star this repo** | 🔔 **Watch for weekly updates** | 🔥 **Share with your SOC**
+
+```
