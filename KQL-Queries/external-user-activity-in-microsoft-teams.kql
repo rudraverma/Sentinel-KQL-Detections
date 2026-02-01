@@ -1,0 +1,24 @@
+let lookbacktime = ago(1h);
+let domain_whitelist = _GetWatchlist('external_teams_domains_whitelist') | project tolower(Domain);
+CloudAppEvents
+| where TimeGenerated >= lookbacktime 
+| where Application == 'Microsoft Teams'
+| extend SourceTenant = split(AccountId,'@',1)
+| mv-expand SourceTenant
+| extend SourceTenant = tolower(tostring(SourceTenant))
+| where isnotempty(SourceTenant)
+| where IsExternalUser == true
+| where not(SourceTenant has_any (domain_whitelist))
+| where ActionType has_any ('ChatCreated','CallParticipantDetail')
+| extend Raw = parse_json(RawEventData)
+| extend L1 = Raw 
+| evaluate bag_unpack(L1, "", "keep_source")
+| extend AppAccessContext_d = iif(isnull(Raw.AppAccessContext), dynamic({}), todynamic(Raw.AppAccessContext)),
+         ParticipantInfo_d = iif(isnull(Raw.ParticipantInfo), dynamic({}), todynamic(Raw.ParticipantInfo))
+| evaluate bag_unpack(AppAccessContext_d, "AppAccessContext_", "keep_source")
+| evaluate bag_unpack(ParticipantInfo_d, "ParticipantInfo_", "keep_source")
+| extend Members_d = iif(isnull(Raw.Members), dynamic([]), todynamic(Raw.Members))
+| mv-expand Member = Members_d
+| extend User_DisplayName    = tostring(Member.DisplayName),
+         User_UPN            = tostring(Member.UPN)
+| project TimeGenerated,SourceTenant,AccountId,Application,ActionType,User_DisplayName,User_UPN
