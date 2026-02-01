@@ -1,0 +1,30 @@
+// Detection: Code.exe Running from Non-Standard Locations
+// Detect Code.exe processes outside legitimate VS Code installation paths
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where FileName =~ "Code.exe"
+| where FolderPath !has_any (
+    @"Microsoft VS Code\Code.exe",
+    @"VSCode\Code.exe",
+    @"Visual Studio Code\Code.exe"
+)
+| extend RiskLevel = case(
+    FolderPath has_any (@"\Temp", @"\AppData\Local\Temp"), "Critical",
+    FolderPath has @"ScreenConnect Client", "High",
+    FolderPath has @"Program Files (x86)", "Medium",
+    "Low"
+)
+| project 
+    Timestamp,
+    DeviceName,
+    AccountName,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    ParentProcessName = InitiatingProcessFileName,
+    ParentProcessCommandLine = InitiatingProcessCommandLine,
+    RiskLevel,
+    SHA256,
+    MD5
+| where RiskLevel in ("Critical", "High")
+| order by Timestamp desc
