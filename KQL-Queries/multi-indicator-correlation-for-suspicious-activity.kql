@@ -1,0 +1,36 @@
+// Correlate multiple IOCs for high-confidence detection
+let FileIndicators = DeviceFileEvents
+| where Timestamp > ago(30d)
+| where FolderPath has_any (@"\Temp\Lightshot\", @"ScreenConnect Client", @".vscode\extensions\clawdbot")
+| summarize FileEvents = count() by DeviceName, AccountName;
+let NetworkIndicators = DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemoteUrl has_any ("meeting.bulletmailer.net", "clawdbot.getintwopc.site", "darkgptprivate.com")
+    or RemoteIP in ("179.43.176.32", "178.16.54.253")
+    or RemotePort == 8041
+| summarize NetworkEvents = count() by DeviceName, AccountName;
+let ProcessIndicators = DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where (FileName =~ "Code.exe" and FolderPath !has "Microsoft VS Code")
+    or FileName has "ScreenConnect"
+| summarize ProcessEvents = count() by DeviceName, AccountName;
+FileIndicators
+| join kind=inner NetworkIndicators on DeviceName, AccountName
+| join kind=inner ProcessIndicators on DeviceName, AccountName
+| extend TotalIndicators = FileEvents + NetworkEvents + ProcessEvents
+| extend ThreatScore = case(
+    TotalIndicators >= 10, "Critical",
+    TotalIndicators >= 5, "High",
+    TotalIndicators >= 3, "Medium",
+    "Low"
+)
+| where ThreatScore in ("Critical", "High")
+| project 
+    DeviceName,
+    AccountName,
+    FileEvents,
+    NetworkEvents,
+    ProcessEvents,
+    TotalIndicators,
+    ThreatScore
+| order by TotalIndicators desc
