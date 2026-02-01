@@ -87,5 +87,3 @@ Test before production. Tune for your environment. Use responsibly.
 **#cyberhawkthreatintel #cyberhawkconsultancy #cyberhawkk**
 
 ⭐ **Star this repo** | 🔔 **Watch for weekly updates** | 🔥 **Share with your SOC**
-
-```
