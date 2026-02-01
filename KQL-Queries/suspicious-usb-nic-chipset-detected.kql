@@ -1,0 +1,28 @@
+// Known suspicious USB NIC chipsets often used in MITM implants
+let SuspiciousNICs = datatable(VendorId:string, ProductId:string, Description:string)
+[
+    "0B95","772A","ASIX AX88772A USB2Ethernet (Hak5 LAN Turtle)",
+    "0B95","1790","ASIX AX88179 USB3Ethernet",
+    "0BDA","8153","Realtek USB GbE (used in Pi-based dongles/implants)",
+    "0BDA","8152","Realtek 10/100 USB Ethernet",
+    "2001","1A02","D-Link USB Ethernet (seen in modded implants)"
+];
+DeviceEvents
+| where TimeGenerated > ago(1h)
+| where ActionType == "PnpDeviceConnected"
+| extend DeviceName = tostring(parse_json(AdditionalFields).DeviceName),
+         DeviceClass = tostring(parse_json(AdditionalFields).DeviceClassGuid),
+         VendorId = tostring(parse_json(AdditionalFields).VendorId),
+         ProductId = tostring(parse_json(AdditionalFields).ProductId)
+| where DeviceClass == "{4d36e972-e325-11ce-bfc1-08002be10318}" // Network Adapters only
+| join kind=inner SuspiciousNICs on VendorId, ProductId
+| project
+    TimeGenerated,
+    DeviceId,
+    DeviceName,
+    VendorId,
+    ProductId,
+    Description,
+    InitiatingProcessAccountName,
+    ReportId
+| order by TimeGenerated desc
