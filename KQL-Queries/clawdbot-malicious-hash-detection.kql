@@ -1,0 +1,34 @@
+// Detect known malicious file hashes from ClawdBot campaign
+let MaliciousHashes = dynamic([
+    "e20b920c7af988aa215c95bbaa365d005dd673544ab7e3577b60fecf11dcdea2", // Code.exe / zoomupdate.msi
+    "d1e0c26774cb8beabaf64f119652719f673fb530368d5b2166178191ad5fcbea", // DWrite.dll
+    "adbcdb613c04fd51936cb0863d2417604db0cd04792ab7cae02526d48944c77b", // extension.js
+    "04ef48b104d6ebd05ad70f6685ade26c1905495456f52dfe0fb42f550bd43388"  // run.bat
+]);
+union
+(
+    DeviceFileEvents
+    | where Timestamp > ago(90d)
+    | where SHA256 in (MaliciousHashes)
+),
+(
+    DeviceProcessEvents
+    | where Timestamp > ago(90d)
+    | where SHA256 in (MaliciousHashes)
+),
+(
+    DeviceImageLoadEvents
+    | where Timestamp > ago(90d)
+    | where SHA256 in (MaliciousHashes)
+)
+| project 
+    Timestamp,
+    DeviceName,
+    AccountName,
+    FileName,
+    FolderPath,
+    SHA256,
+    ActionType,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine
+| order by Timestamp desc
