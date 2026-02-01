@@ -3,11 +3,6 @@
            🛡️ CYBERHAWK THREAT INTEL | MICROSOFT SENTINEL KQL 🛡️
 🦅═══════════════════════════════════════════════════════════════════════🦅
 
-![Built with KQL](https://img.shields.io/badge/Built%20with-KQL-blue?style=for-the-badge&logo=microsoft)
-![MITRE ATT&CK](https://img.shields.io/badge/MITRE%20ATT%26CK-Mapped-orange?style=for-the-badge)
-![SOC Ready](https://img.shields.io/badge/SOC-Ready-purple?style=for-the-badge)
-![Threat Intel](https://img.shields.io/badge/Threat-Intelligence-red?style=for-the-badge)
-
 ---
 
 ## 🎯 What's Inside
