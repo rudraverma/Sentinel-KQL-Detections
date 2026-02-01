@@ -1,0 +1,33 @@
+DeviceNetworkEvents
+| where Timestamp > ago(30d)
+| where RemoteUrl has_any (
+    "meeting.bulletmailer.net",
+    "clawdbot.getintwopc.site",
+    "darkgptprivate.com",
+    "getintwopc.site"
+) or RemoteIP in (
+    "179.43.176.32",
+    "178.16.54.253"
+) or RemotePort == 8041
+| extend ThreatIndicator = case(
+    RemoteUrl has "meeting.bulletmailer.net" and RemotePort == 8041, "ScreenConnect C2",
+    RemoteUrl has "clawdbot.getintwopc.site", "Extension C2",
+    RemoteUrl has "darkgptprivate.com", "Backup C2",
+    RemoteIP == "179.43.176.32", "ScreenConnect Relay IP",
+    RemoteIP == "178.16.54.253", "Backup C2 IP",
+    "Unknown C2"
+)
+| project 
+    Timestamp,
+    DeviceName,
+    AccountName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    RemoteUrl,
+    RemoteIP,
+    RemotePort,
+    ThreatIndicator,
+    ActionType,
+    LocalIP,
+    LocalPort
+| order by Timestamp desc
