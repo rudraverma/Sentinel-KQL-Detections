@@ -1,0 +1,17 @@
+// Direct send email spoofing T1672
+EmailEvents
+| where (AuthenticationDetails contains '"SPF":"softfail"' or AuthenticationDetails contains '"SPF":"fail"')
+| where AuthenticationDetails contains '"DKIM":"none"'
+| where AuthenticationDetails contains '"DMARC":"fail"'
+| where AuthenticationDetails !contains '"CompAuth":"pass"'
+| where DeliveryAction !in ('Blocked')
+| where isempty(Connectors)
+//Get email username (everything before the @)
+| extend SenderLocal    = tolower(split(SenderFromAddress, '@')[0])
+| extend RecipientLocal = tolower(split(RecipientEmailAddress, '@')[0])
+| where SenderLocal == RecipientLocal
+| extend IPAddress = coalesce(SenderIPv4, SenderIPv6)
+| extend geoinfo   = parse_json(geo_info_from_ip_address(IPAddress))
+| extend Country   = tostring(geoinfo.country)
+| where Country !in ('New Zealand','Australia') //you can exclude your own preffered country
+| project TimeGenerated, AuthenticationDetails, DeliveryAction, DeliveryLocation, EmailDirection, IPAddress, Country, Subject, SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress, NetworkMessageId
