@@ -1,0 +1,6 @@
+
+//Repo - T1567.002: Rclone exfiltration tool observed on host
+DeviceFileEvents
+| where ActionType  == 'FileCreated'
+| where FileName == 'rclone.conf'
+| project DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName, FileName, FolderPath
