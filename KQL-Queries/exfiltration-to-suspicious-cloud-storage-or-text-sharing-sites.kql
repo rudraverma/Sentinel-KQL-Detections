@@ -1,0 +1,32 @@
+//Repo - T1567.002 Exfiltration Over Web Service: Exfiltration to suspicious Cloud Storage
+// TTP [T1567.002] 
+// DS [DeviceNetworkEvents]
+//insert suspicious domains
+let suspiciousexfildomains = dynamic([
+"pcloud.com"
+,"api.telegram.org"
+,"gofile.io"
+,"siasky.net"
+,"paste.ee"
+,"ngrok.io" 
+,"ufile.io"
+,"filebin.net"
+,"transfer.sh"
+,"rentry.co"
+,"zerobin.net"
+,"textbin.net"
+,"www.uplooder.net"
+,"pastie.org"
+,"anonfiles.com"
+,"mediafire.com"
+]) ;
+DeviceNetworkEvents 
+| where RemoteUrl has_any(suspiciousexfildomains)
+| project
+    TimeGenerated,
+    InitiatingProcessFileName,
+    AccountCustomEntity = iff(isnotempty(InitiatingProcessAccountUpn), InitiatingProcessAccountUpn, InitiatingProcessAccountName),
+    URLCustomEntity = RemoteUrl,
+    IPCustomEntity = RemoteIP,
+    HostNameCustomentity = DeviceName,
+    ProcessCustomEntity = InitiatingProcessCommandLine
