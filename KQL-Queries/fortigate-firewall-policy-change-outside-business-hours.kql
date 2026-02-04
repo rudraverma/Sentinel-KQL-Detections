@@ -1,0 +1,15 @@
+// Repo - T1584.008 - Fortigate config change outside of business hours
+let timeRange = 1h;
+CommonSecurityLog
+| where TimeGenerated > ago(timeRange)
+| where DeviceVendor == 'Fortinet'
+| where DeviceEventCategory == 'event:system'
+| where DeviceAction has_any ('Move' , 'Add' , 'Enable' , 'Delete' , 'Edit')
+| where DeviceCustomString4 contains 'firewall.policy'
+// Convert to NZDT by adding 13 hours using datetime_add
+| extend LocalTime = datetime_add('hour', 13, TimeGenerated)
+| extend EventHour = datetime_part('hour', LocalTime)
+// Filter for out-of-office hours: before 8 AM or after 5 PM NZDT
+| where EventHour < 8 or EventHour > 17
+| sort by TimeGenerated desc
+| project TimeGenerated,DeviceExternalID,DeviceCustomString4,DestinationUserName
