@@ -1,0 +1,34 @@
+
+//Repo - T1569.002 PSexec tool observed on host
+//----------------------------------------------------------------
+// 1. PsExec Service Creation (EventID 7045)
+//----------------------------------------------------------------
+let svc = SecurityEvent
+| where EventID == 7045
+| where ServiceName has_any ("PSEXESVC","psexesvc","svcsvc","spoolsrv")
+| project TimeGenerated, HostName=Computer, Account, detection="PsExecService",
+          CommandLine=ServiceFileName, FilePath=ServiceFileName,
+          FileHash="", ParentProcessName="", InitiatingProcessAccountName="";
+//----------------------------------------------------------------
+// 2. PsExec Execution from DeviceProcessEvents
+//----------------------------------------------------------------
+let proc = DeviceProcessEvents
+| where FileName has_cs "psexec.exe" or ProcessCommandLine has_cs "psexec"
+| project TimeGenerated,
+          HostName=DeviceName,
+          Account=AccountName,
+          detection="PsExecExecution",
+          CommandLine=ProcessCommandLine,
+          FilePath=FolderPath,
+          FileHash=tostring(SHA256),
+          ParentProcessName=InitiatingProcessFileName,
+          InitiatingProcessAccountName;
+//----------------------------------------------------------------
+// 3. Union & Dedup per Host + Detection Type
+//----------------------------------------------------------------
+svc
+| union proc
+| where TimeGenerated >= ago(1d)
+| summarize arg_max(TimeGenerated, *) by HostName, detection
+//| where not(InitiatingProcessAccountName == 'add AccountName here' and HostName == 'add HostName here')
+| order by TimeGenerated desc
