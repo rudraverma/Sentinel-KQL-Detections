@@ -1,0 +1,13 @@
+// Detect Suspicious File Hashes (Threat Intelligence)
+let NotepadSupplyChainHashes = dynamic([
+  "8e6e505438c21f3d281e1cc257abdbf7223b7f5a",
+  "90e677d7ff5844407b9c073e3b7e896e078e11cd",
+  "573549869e84544e3ef253bdba79851dcde4963a",
+  "13179c8f19fbf3d8473c49983a199e6cb4f318f0",
+  "4c9aac447bf732acc97992290aa7a187b967ee2c",
+  "821c0cafb2aab0f063ef7e313f64313fc81d46cd"
+]);
+// File load or creation of known malicious files
+DeviceFileEvents
+| where FileHash in (NotepadSupplyChainHashes)
+| project Timestamp, DeviceName, InitiatingProcessFileName, FileName, FolderPath, FileHash;
