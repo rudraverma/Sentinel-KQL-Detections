@@ -1,0 +1,6 @@
+//Suspicious VS Code Extension Execution (Malicious ClawBot Extension)
+DeviceProcessEvents
+| where InitiatingProcessFileName in ("Code.exe", "code-oss.exe", "Code-Insiders.exe")
+| where ProcessCommandLine has_any("clawdbot","moltbot","openclaw","ClawBotAgent","clawbot-agent")
+| extend SuspiciousExtension = ProcessCommandLine
+| project Timestamp, DeviceName, InitiatingProcessAccount, InitiatingProcessFileName, ProcessCommandLine, FolderPath
