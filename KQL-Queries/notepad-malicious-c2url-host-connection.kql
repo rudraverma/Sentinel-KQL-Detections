@@ -1,0 +1,20 @@
+// Known Notepad++ malicious C2 / URL hosts
+let MaliciousHosts = dynamic([
+  "45.76.155.202", "45.32.144.255",
+  "95.179.213.0", "temp.sh",
+  "cdncheck.it.com", "safe-dns.it.com",
+  "self-dns.it.com", "45.77.31.210"
+]);
+// Search DNS resolutions to these hosts
+DeviceNetworkEvents
+| where RemoteUrl has_any (MaliciousHosts)
+| project Timestamp, DeviceName, InitiatingProcessFileName, RemoteUrl, RemoteIP, RemotePort, ActionType
+
+| union
+// Look for HTTP requests to known malicious domains or URL paths
+DeviceNetworkEvents
+| where (RemoteUrl contains "update/update.exe"
+       or RemoteUrl contains "/users/admin"
+       or RemoteUrl contains "/api/")
+| where RemoteIP in (MaliciousHosts)
+| project Timestamp, DeviceName, InitiatingProcessFileName, RemoteUrl, RemoteIP, RemotePort;
