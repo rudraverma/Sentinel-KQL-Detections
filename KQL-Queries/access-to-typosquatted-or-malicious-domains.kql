@@ -1,0 +1,8 @@
+// Unusual Network Hosts / Typosquat Domain Access
+let MaliciousDomains = dynamic([
+ "moltbot.you", "clawbot.ai", "clawdbot.you"
+]);
+DeviceNetworkEvents
+| where RemoteUrl has_any (MaliciousDomains)
+       or RemoteDomain in (MaliciousDomains)
+| project Timestamp, DeviceName, InitiatingProcessFileName, RemoteUrl, RemoteIP, RemotePort
