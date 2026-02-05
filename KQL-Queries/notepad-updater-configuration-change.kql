@@ -1,0 +1,6 @@
+//Canary — Unexpected Notepad++ Update Activity With No Updater Config
+DeviceRegistryEvents
+| where RegistryKey has @"Notepad++\Settings"
+    and RegistryValueName contains "updater" 
+    and RegistryValueData in ("1","true")
+| project Timestamp, DeviceName, RegistryKey, RegistryValueName, RegistryValueData
