@@ -1,0 +1,6 @@
+//Prompt Injection / Unusual Script Execution by AI Agents
+DeviceProcessEvents
+| where InitiatingProcessFileName in ("bash.exe","powershell.exe","cmd.exe","python.exe")
+  and ProcessCommandLine has_any("invoke-expression","curl","wget","Invoke-WebRequest")
+  and ProcessCommandLine has_any("moltbot","openclaw","clawdbot")
+| project Timestamp, DeviceName, InitiatingProcessAccount, InitiatingProcessFileName, ProcessCommandLine
