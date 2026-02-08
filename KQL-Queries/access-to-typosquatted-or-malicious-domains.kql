@@ -4,5 +4,4 @@ let MaliciousDomains = dynamic([
 ]);
 DeviceNetworkEvents
 | where RemoteUrl has_any (MaliciousDomains)
-       or RemoteDomain in (MaliciousDomains)
 | project Timestamp, DeviceName, InitiatingProcessFileName, RemoteUrl, RemoteIP, RemotePort
