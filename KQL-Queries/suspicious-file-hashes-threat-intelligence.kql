@@ -10,4 +10,4 @@ let NotepadSupplyChainHashes = dynamic([
 // File load or creation of known malicious files
 DeviceFileEvents
 | where sha in (NotepadSupplyChainHashes)
-| project Timestamp, DeviceName, InitiatingProcessFileName, FileName, FolderPath, FileHash;
+| project Timestamp, DeviceName, InitiatingProcessFileName, FileName, FolderPath, sha;
