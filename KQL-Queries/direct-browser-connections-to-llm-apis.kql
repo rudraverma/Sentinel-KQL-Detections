@@ -1,0 +1,54 @@
+// Name: Direct Browser Connections to LLM APIs
+// Author: Rudra Verma - CyberHawk
+// Date: 2026-02-08
+// Description: Detects browser processes making direct network connections to known Large Language Model (LLM) API endpoints. This activity is unusual when originating from general user web browsing, as it may indicate a malicious website is using an LLM to dynamically generate and fetch malicious code (e.g., JavaScript for a phishing page) at runtime.
+// False Positive Sensitivity: Medium
+// References:
+// - https://unit42.paloaltonetworks.com/real-time-malicious-javascript-through-llms/
+// Tags:
+// - T1566.002
+// - T1059.007
+// - T1102.002
+// - Phishing
+// - LLM
+// - JavaScript
+let browserProcesses = dynamic([
+    "chrome.exe",
+    "msedge.exe",
+    "firefox.exe",
+    "brave.exe",
+    "iexplore.exe"
+]);
+// A list of common LLM provider API endpoints. This list should be updated as new services emerge.
+// This list intentionally excludes web-chat front-end domains (e.g., chat.openai.com) to focus on API-specific traffic.
+let llmApiDomains = dynamic([
+    "api.openai.com",
+    "generativelanguage.googleapis.com",
+    "api.deepseek.com",
+    "api.anthropic.com",
+    "api.mistral.ai"
+]);
+let connectionThreshold = 3;
+DeviceNetworkEvents
+| where Timestamp > ago(1d)
+// Filter for common web browser processes initiating the network connection.
+| where InitiatingProcessFileName in~ (browserProcesses)
+// Identify connections to known LLM API domains.
+| where RemoteUrl has_any (llmApiDomains)
+// Summarize connections to reduce noise from legitimate, but chatty, web applications.
+| summarize ConnectionCount = count(), make_set(RemoteIP), FirstSeen=min(Timestamp), LastSeen=max(Timestamp) by DeviceName, AccountName, InitiatingProcessFileName, RemoteUrl, InitiatingProcessCommandLine
+// Alert only when a minimum number of connections are seen, suggesting more than a trivial interaction.
+| where ConnectionCount >= connectionThreshold
+// FP Tuning: This detection may trigger on legitimate web applications with sanctioned LLM integrations.
+// The 'connectionThreshold' can be raised to reduce noise.
+// Investigation should focus on the context of the browsing session and the reputation of the website making the calls.
+// Consider creating an exclusion list for sanctioned applications or developer machines that are expected to perform this activity.
+| project-reorder
+    FirstSeen,
+    LastSeen,
+    DeviceName,
+    AccountName,
+    InitiatingProcessFileName,
+    RemoteUrl,
+    ConnectionCount,
+    InitiatingProcessCommandLine
