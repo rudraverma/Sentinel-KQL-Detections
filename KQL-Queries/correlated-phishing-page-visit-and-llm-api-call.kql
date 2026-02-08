@@ -5,6 +5,11 @@
 // False Positive Sensitivity: Medium
 // References:
 // - https://unit42.paloaltonetworks.com/real-time-malicious-javascript-through-llms/
+// Name: LLM-Augmented Phishing Detection - Correlated Suspicious Page + API Calls
+// Author: Rudra Verma - CyberHawk
+// Date: 2026-02-09
+// References: https://unit42.paloaltonetworks.com/real-time-malicious-javascript-through-llms/
+
 let timeframe = 1d;
 let correlationWindow = 5m;
 let browserProcesses = dynamic([
@@ -23,26 +28,24 @@ let llmApiDomains = dynamic([
     "api.openai.com", "generativelanguage.googleapis.com",
     "api.deepseek.com", "api.anthropic.com", "api.mistral.ai"
 ]);
-// Step 1: Identify suspicious page visits with proper domain filtering
 let SuspiciousPageVisits = 
     DeviceNetworkEvents
     | where TimeGenerated > ago(timeframe)
     | where InitiatingProcessFileName in~ (browserProcesses)
     | where isnotempty(RemoteUrl)
-    | extend ParsedUrl = parse_url(RemoteUrl)
-    | extend Domain = tostring(ParsedUrl.Host)
-    | extend Path = tostring(ParsedUrl.Path)
-    | where Path has_any (phishingUrlKeywords)  // Check path only
-    | where not(Domain has_any (legitimateDomains))  // Exclude legit domains
+    | extend Domain = tostring(parse_url(RemoteUrl).Host)
+    | extend Path = tostring(parse_url(RemoteUrl).Path)
+    | where isnotempty(Path)
+    | where Path has_any (phishingUrlKeywords)
+    | where not(Domain has_any (legitimateDomains))
     | project 
         PhishingVisitTime = TimeGenerated, 
         DeviceId, 
-        AccountName, 
+        PhishingAccountName = InitiatingProcessAccountName,
         PhishingUrl = RemoteUrl,
         PhishingDomain = Domain,
         PhishingRemoteIP = RemoteIP,
-        InitiatingProcessFileName;
-// Step 2: Identify LLM API calls
+        PhishingProcessName = InitiatingProcessFileName;
 let LLM_API_Calls = 
     DeviceNetworkEvents
     | where TimeGenerated > ago(timeframe)
@@ -51,23 +54,19 @@ let LLM_API_Calls =
     | project 
         LLMCallTime = TimeGenerated, 
         DeviceId, 
-        AccountName, 
+        LLMAccountName = InitiatingProcessAccountName,
         LLMApiUrl = RemoteUrl,
         LLMRemoteIP = RemoteIP,
-        InitiatingProcessCommandLine;
-// Step 3: Correlate with optimized join
+        LLMProcessCommandLine = InitiatingProcessCommandLine;
 SuspiciousPageVisits
 | join kind=inner hint.strategy=shuffle (
     LLM_API_Calls
 ) on DeviceId
-// Handle cases where AccountName might be empty
-| where SuspiciousPageVisits.AccountName == LLM_API_Calls.AccountName 
-    or isempty(SuspiciousPageVisits.AccountName) 
-    or isempty(LLM_API_Calls.AccountName)
-// Temporal correlation
+| where PhishingAccountName == LLMAccountName 
+    or isempty(PhishingAccountName) 
+    or isempty(LLMAccountName)
 | where LLMCallTime between (PhishingVisitTime .. (PhishingVisitTime + correlationWindow))
 | extend TimeDelta = LLMCallTime - PhishingVisitTime
-// Deduplicate and enrich
 | summarize 
     FirstPhishingVisit = min(PhishingVisitTime),
     LastLLMCall = max(LLMCallTime),
@@ -77,10 +76,9 @@ SuspiciousPageVisits
     PhishingIPs = make_set(PhishingRemoteIP, 10),
     LLMApiUrls = make_set(LLMApiUrl, 10),
     LLMIPs = make_set(LLMRemoteIP, 10),
-    CommandLines = make_set(InitiatingProcessCommandLine, 5)
-    by DeviceId, AccountName, InitiatingProcessFileName, bin(FirstPhishingVisit, 1h)
-| where EventCount >= 2  // At least 2 correlated events
-// Add severity scoring
+    CommandLines = make_set(LLMProcessCommandLine, 5)
+    by DeviceId, PhishingAccountName, PhishingProcessName, bin(PhishingVisitTime, 1h)
+| where EventCount >= 2
 | extend AlertSeverity = case(
     EventCount >= 5, "High",
     EventCount >= 3, "Medium",
@@ -92,8 +90,8 @@ SuspiciousPageVisits
     LastLLMCall,
     EventCount,
     DeviceId,
-    AccountName,
-    InitiatingProcessFileName,
+    PhishingAccountName,
+    PhishingProcessName,
     PhishingUrls,
     PhishingDomains,
     PhishingIPs,
@@ -101,3 +99,4 @@ SuspiciousPageVisits
     LLMIPs,
     CommandLines
 | sort by AlertSeverity desc, EventCount desc
+
