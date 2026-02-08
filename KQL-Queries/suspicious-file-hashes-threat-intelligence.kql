@@ -31,7 +31,7 @@ DeviceFileEvents
     ReportId
 | sort by TimeGenerated desc
 
-
+// more Enhanced KQL for Notepad++
 
 // Name: Notepad++ Supply Chain Attack - Enhanced Detection with Context
 // Author: Rudra Verma - CyberHawk
