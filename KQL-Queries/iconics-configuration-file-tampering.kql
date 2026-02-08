@@ -1,0 +1,39 @@
+// Name: ICONICS Configuration File Tampering
+// Author: Rudra Verma - CyberHawk
+// Date: 2026-02-08
+// Tactic: Defense Evasion, Persistence
+// Technique: T1565.001
+// Description: Detects modification of critical ICONICS Suite configuration files by unauthorized processes. Attackers can modify these files, such as changing the SMSLogFile path in IcoSetup64.ini, to redirect privileged file writes for privilege escalation or DoS, as seen in the CVE-2025-0921 exploit chain.
+// False Positive Sensitivity: Medium
+// References: https://unit42.paloaltonetworks.com/iconics-suite-cve-2025-0921/
+
+let known_procs = dynamic([
+    "GenBroker64.exe",
+    "AlarmWorX64.exe",
+    "FrameWorX.exe",
+    "FwxServer.exe",
+    "TrendWorX64.exe",
+    "PagerCfg.exe",
+    "IcoSetup.exe"
+]);
+DeviceFileEvents
+// Focus on file modification events, which are the highest signal for tampering.
+| where ActionType == "FileModified"
+// Target the specific folder where ICONICS configurations are stored.
+| where FolderPath endswith "\\ProgramData\\ICONICS\\"
+// Monitor the key configuration files involved in the exploit chain.
+| where FileName in~ ("IcoSetup64.ini", "IcoSetup.ini", "GenBroker32.ini")
+// Exclude known legitimate ICONICS processes that are expected to modify these files.
+| where not(InitiatingProcessFileName in~ (known_procs))
+// Potential for False Positives: Legitimate administrative scripts or third-party tools that integrate with ICONICS might modify these files.
+// Tuning Suggestion: Add any legitimate management tools to the 'known_procs' list if they cause false positives in your environment.
+| project
+    Timestamp,
+    DeviceName,
+    ActionType,
+    FileName,
+    FolderPath,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessAccountName,
+    ReportId
