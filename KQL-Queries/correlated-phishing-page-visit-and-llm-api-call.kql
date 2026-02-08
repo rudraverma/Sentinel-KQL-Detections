@@ -1,0 +1,103 @@
+// Name: Correlated Phishing Page Visit and LLM API Call
+// Author: Rudra Verma - CyberHawk
+// Date: 2026-02-08
+// Description: Detects a browser visiting a URL with phishing-related keywords, followed by a direct network connection to a known Large Language Model (LLM) API endpoint from the same device within a short time window. This correlated behavior is a strong indicator of the "runtime assembly" attack pattern, where a malicious page dynamically generates a phishing payload by calling an LLM service.
+// False Positive Sensitivity: Medium
+// References:
+// - https://unit42.paloaltonetworks.com/real-time-malicious-javascript-through-llms/
+let timeframe = 1d;
+let correlationWindow = 5m;
+let browserProcesses = dynamic([
+    "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "iexplore.exe"
+]);
+let phishingUrlKeywords = dynamic([
+    "login", "signin", "logon", "verify", "account", 
+    "password", "credential", "support", "authenticate"
+]);
+let legitimateDomains = dynamic([
+    "microsoft.com", "office.com", "live.com", "google.com",
+    "accounts.google.com", "facebook.com", "apple.com", 
+    "amazon.com", "okta.com", "service-now.com"
+]);
+let llmApiDomains = dynamic([
+    "api.openai.com", "generativelanguage.googleapis.com",
+    "api.deepseek.com", "api.anthropic.com", "api.mistral.ai"
+]);
+// Step 1: Identify suspicious page visits with proper domain filtering
+let SuspiciousPageVisits = 
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(timeframe)
+    | where InitiatingProcessFileName in~ (browserProcesses)
+    | where isnotempty(RemoteUrl)
+    | extend ParsedUrl = parse_url(RemoteUrl)
+    | extend Domain = tostring(ParsedUrl.Host)
+    | extend Path = tostring(ParsedUrl.Path)
+    | where Path has_any (phishingUrlKeywords)  // Check path only
+    | where not(Domain has_any (legitimateDomains))  // Exclude legit domains
+    | project 
+        PhishingVisitTime = TimeGenerated, 
+        DeviceId, 
+        AccountName, 
+        PhishingUrl = RemoteUrl,
+        PhishingDomain = Domain,
+        PhishingRemoteIP = RemoteIP,
+        InitiatingProcessFileName;
+// Step 2: Identify LLM API calls
+let LLM_API_Calls = 
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(timeframe)
+    | where InitiatingProcessFileName in~ (browserProcesses)
+    | where RemoteUrl has_any (llmApiDomains)
+    | project 
+        LLMCallTime = TimeGenerated, 
+        DeviceId, 
+        AccountName, 
+        LLMApiUrl = RemoteUrl,
+        LLMRemoteIP = RemoteIP,
+        InitiatingProcessCommandLine;
+// Step 3: Correlate with optimized join
+SuspiciousPageVisits
+| join kind=inner hint.strategy=shuffle (
+    LLM_API_Calls
+) on DeviceId
+// Handle cases where AccountName might be empty
+| where SuspiciousPageVisits.AccountName == LLM_API_Calls.AccountName 
+    or isempty(SuspiciousPageVisits.AccountName) 
+    or isempty(LLM_API_Calls.AccountName)
+// Temporal correlation
+| where LLMCallTime between (PhishingVisitTime .. (PhishingVisitTime + correlationWindow))
+| extend TimeDelta = LLMCallTime - PhishingVisitTime
+// Deduplicate and enrich
+| summarize 
+    FirstPhishingVisit = min(PhishingVisitTime),
+    LastLLMCall = max(LLMCallTime),
+    EventCount = count(),
+    PhishingUrls = make_set(PhishingUrl, 10),
+    PhishingDomains = make_set(PhishingDomain, 10),
+    PhishingIPs = make_set(PhishingRemoteIP, 10),
+    LLMApiUrls = make_set(LLMApiUrl, 10),
+    LLMIPs = make_set(LLMRemoteIP, 10),
+    CommandLines = make_set(InitiatingProcessCommandLine, 5)
+    by DeviceId, AccountName, InitiatingProcessFileName, bin(FirstPhishingVisit, 1h)
+| where EventCount >= 2  // At least 2 correlated events
+// Add severity scoring
+| extend AlertSeverity = case(
+    EventCount >= 5, "High",
+    EventCount >= 3, "Medium",
+    "Low"
+)
+| project-reorder
+    AlertSeverity,
+    FirstPhishingVisit,
+    LastLLMCall,
+    EventCount,
+    DeviceId,
+    AccountName,
+    InitiatingProcessFileName,
+    PhishingUrls,
+    PhishingDomains,
+    PhishingIPs,
+    LLMApiUrls,
+    LLMIPs,
+    CommandLines
+| sort by AlertSeverity desc, EventCount desc
