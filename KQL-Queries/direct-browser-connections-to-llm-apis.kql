@@ -1,54 +1,96 @@
 // Name: Direct Browser Connections to LLM APIs
 // Author: Rudra Verma - CyberHawk
 // Date: 2026-02-08
-// Description: Detects browser processes making direct network connections to known Large Language Model (LLM) API endpoints. This activity is unusual when originating from general user web browsing, as it may indicate a malicious website is using an LLM to dynamically generate and fetch malicious code (e.g., JavaScript for a phishing page) at runtime.
-// False Positive Sensitivity: Medium
+// Version: 2.0 (Production Optimized)
+// Description: Detects browser processes making direct network connections to known Large Language Model (LLM) API endpoints.
+// This activity is unusual when originating from general user web browsing, as it may indicate a malicious website
+// is using an LLM to dynamically generate and fetch malicious code (e.g., JavaScript for a phishing page) at runtime.
+// False Positive Sensitivity: Low-Medium
 // References:
 // - https://unit42.paloaltonetworks.com/real-time-malicious-javascript-through-llms/
 // Tags:
-// - T1566.002
-// - T1059.007
-// - T1102.002
-// - Phishing
-// - LLM
-// - JavaScript
+// - T1566.002 (Phishing: Spearphishing Link)
+// - T1059.007 (JavaScript)
+// - T1102.002 (Web Service: Bidirectional Communication)
+let timeframe = 1d;
+let connectionThreshold = 3;
 let browserProcesses = dynamic([
-    "chrome.exe",
-    "msedge.exe",
-    "firefox.exe",
-    "brave.exe",
-    "iexplore.exe"
+    "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "iexplore.exe"
 ]);
-// A list of common LLM provider API endpoints. This list should be updated as new services emerge.
-// This list intentionally excludes web-chat front-end domains (e.g., chat.openai.com) to focus on API-specific traffic.
+// LLM API endpoints - excludes web-chat interfaces to reduce FPs
 let llmApiDomains = dynamic([
     "api.openai.com",
     "generativelanguage.googleapis.com",
     "api.deepseek.com",
     "api.anthropic.com",
-    "api.mistral.ai"
+    "api.mistral.ai",
+    "api.cohere.ai",
+    "api.ai21.com"
 ]);
-let connectionThreshold = 3;
+// Optional: Whitelist sanctioned browser extensions making legitimate API calls
+let approvedExtensions = dynamic([
+    // Add your organization's approved extension IDs here
+    // Example: "aapbdbdomjkkjkaonfhkkikfgjllcleb"  // Google Translate
+]);
 DeviceNetworkEvents
-| where Timestamp > ago(1d)
-// Filter for common web browser processes initiating the network connection.
+| where TimeGenerated > ago(timeframe)
+// Filter for browser processes
 | where InitiatingProcessFileName in~ (browserProcesses)
-// Identify connections to known LLM API domains.
+// Only successful HTTPS connections to LLM APIs
+| where ActionType == "ConnectionSuccess"
+| where RemotePort in (443, 8443)
 | where RemoteUrl has_any (llmApiDomains)
-// Summarize connections to reduce noise from legitimate, but chatty, web applications.
-| summarize ConnectionCount = count(), make_set(RemoteIP), FirstSeen=min(Timestamp), LastSeen=max(Timestamp) by DeviceName, AccountName, InitiatingProcessFileName, RemoteUrl, InitiatingProcessCommandLine
-// Alert only when a minimum number of connections are seen, suggesting more than a trivial interaction.
+// Exclude approved browser extensions
+| where not(InitiatingProcessCommandLine has_any (approvedExtensions))
+| where InitiatingProcessCommandLine !contains "--extension-id"
+    or isempty(InitiatingProcessCommandLine)
+// Parse HTTP method from AdditionalFields
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend HTTPMethod = tostring(ParsedFields.method)
+| where HTTPMethod in ("POST", "GET")  // Actual API calls
+// Focus on API-specific endpoints (optional but reduces noise)
+| where RemoteUrl contains "/v1/" 
+    or RemoteUrl contains "/chat/completions"
+    or RemoteUrl contains "/models/"
+// Aggregate by time buckets to detect burst patterns
+| summarize 
+    ConnectionCount = count(),
+    RemoteIPs = make_set(RemoteIP, 10),
+    HTTPMethods = make_set(HTTPMethod),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    TimeSpan = datetime_diff('minute', max(TimeGenerated), min(TimeGenerated))
+    by DeviceName, AccountName, InitiatingProcessFileName, RemoteUrl, 
+       InitiatingProcessCommandLine, bin(TimeGenerated, 10m)
+// Calculate connection density
+| extend ConnectionsPerMinute = todouble(ConnectionCount) / todouble(TimeSpan + 1)
+// Alert threshold with density consideration
 | where ConnectionCount >= connectionThreshold
-// FP Tuning: This detection may trigger on legitimate web applications with sanctioned LLM integrations.
-// The 'connectionThreshold' can be raised to reduce noise.
-// Investigation should focus on the context of the browsing session and the reputation of the website making the calls.
-// Consider creating an exclusion list for sanctioned applications or developer machines that are expected to perform this activity.
+    or ConnectionsPerMinute > 1.0  // More than 1 call/minute is suspicious
+// Severity scoring
+| extend AlertSeverity = case(
+    ConnectionCount >= 50 or ConnectionsPerMinute >= 5.0, "Critical",
+    ConnectionCount >= 20 or ConnectionsPerMinute >= 2.0, "High",
+    ConnectionCount >= 10 or ConnectionsPerMinute >= 1.0, "Medium",
+    "Low"
+)
+// Enrich with investigation context
+| extend 
+    IsRapidFire = iff(ConnectionsPerMinute >= 1.0, true, false),
+    TotalDuration = strcat(TimeSpan, " minutes")
 | project-reorder
+    AlertSeverity,
     FirstSeen,
     LastSeen,
+    TotalDuration,
     DeviceName,
     AccountName,
     InitiatingProcessFileName,
     RemoteUrl,
     ConnectionCount,
+    ConnectionsPerMinute,
+    IsRapidFire,
+    RemoteIPs,
+    HTTPMethods,
     InitiatingProcessCommandLine
+| sort by AlertSeverity desc, ConnectionCount desc
