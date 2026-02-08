@@ -6,35 +6,43 @@
 // Description: Detects the creation of a symbolic link or junction point by a non-elevated process where the target is a critical system file or directory. This is a key step in exploits like CVE-2025-0921, where a privileged process is tricked into writing to a sensitive location by following a malicious link.
 // False Positive Sensitivity: Medium
 // References: https://unit42.paloaltonetworks.com/iconics-suite-cve-2025-0921/
-
-let criticalFiles = dynamic([
-    "cng.sys", // Target in CVE-2025-0921, can cause DoS
-    "sam",     // SAM hive for credential access
-    "system",  // SYSTEM hive for credential access/persistence
-    "security" // SECURITY hive
+let criticalTargets = dynamic([
+    "cng.sys", "ntoskrnl.exe", "hal.dll", "win32k.sys",
+    "sam", "system", "security"
 ]);
-DeviceEvents
-// Filter for symbolic link or junction creation events, which are the core of the exploit technique.
-| where ActionType in ("SymbolicLinkCreated", "JunctionCreated")
-// Focus on links created by non-elevated processes, a key indicator of malicious intent.
-| where InitiatingProcessTokenElevation != "TokenElevationTypeFull"
-// Parse link and target paths from the event data.
-| extend ParsedFields = parse_json(AdditionalFields)
-| extend LinkPath = tostring(ParsedFields.LinkName)
-| extend TargetPath = tostring(ParsedFields.TargetName)
-| extend TargetFileName = tostring(split(TargetPath, '\\')[-1])
-// Alert if the link targets a critical file within the System32 directory.
-| where TargetPath startswith "C:\\Windows\\System32\\" and TargetFileName in~ (criticalFiles)
-// Potential for False Positives: Some legitimate installers or administrative scripts might perform this action.
-// Tuning Suggestion: Exclude known legitimate processes (InitiatingProcessFileName) if they are part of an expected workflow.
+
+DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+// Detect mklink, PowerShell, or fsutil commands creating symlinks
+| where ProcessCommandLine has_any ("mklink", "New-Item -ItemType SymbolicLink", "New-Item -ItemType Junction", "fsutil reparsepoint")
+// Focus on non-elevated processes
+| where InitiatingProcessTokenElevation != "TokenElevationTypeFull"  // Valid here
+| where InitiatingProcessIntegrityLevel in ("Low", "Medium")  // Also valid here
+// Check if command targets critical system paths
+| where ProcessCommandLine has_any (criticalTargets)
+    or ProcessCommandLine contains "System32\\drivers"
+    or ProcessCommandLine contains "System32\\config"
+    or ProcessCommandLine contains "Windows\\Boot"
+// Exclude legitimate admin tools
+| where FileName !in~ ("TrustedInstaller.exe", "setup.exe")
+// Enrich with ICONICS-specific indicators
+| extend IsICONICSExploit = iff(
+    ProcessCommandLine contains "ProgramData\\ICONICS" 
+    or InitiatingProcessFolderPath contains "ICONICS"
+    or ProcessCommandLine contains "AlarmWorX"
+    or ProcessCommandLine contains "sms.log",
+    true, false
+)
 | project
-    Timestamp,
+    TimeGenerated,
     DeviceName,
-    ActionType,
-    LinkPath,
-    TargetPath,
+    AccountName,
+    FileName,
+    ProcessCommandLine,
     InitiatingProcessFileName,
     InitiatingProcessCommandLine,
-    InitiatingProcessAccountName,
     InitiatingProcessTokenElevation,
-    ReportId
+    InitiatingProcessIntegrityLevel,
+    IsICONICSExploit,
+    SHA1
+| sort by TimeGenerated desc
