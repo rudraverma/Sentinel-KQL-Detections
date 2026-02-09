@@ -1,0 +1,47 @@
+//Repo - T1219 - Use of unauthorized RMM activity not seen in the baseline
+// Detecting Unauthorized RMM Instances
+let ApprovedRMMDomain = dynamic([".teamviewer.com","mremoteng.org"]); // Your approved RMM domains
+let ApprovedRMMFileName = dynamic(["Teamviewer_service.exe","mRemoteNG.exe", "MsSense.exe"]); // Approved RMM filenames
+let RMMList = externaldata(URI: string, RMMTool: string)
+  [h'https://raw.githubusercontent.com/magicsword-io/LOLRMM/main/website/public/api/rmm_domains.csv']
+   with(format='csv', ignoreFirstRecord=true);
+let RMMUrl = RMMList | project URI | extend URI = tolower(URI);
+// Define a whitelist of initiating processes such as browsers, that are less likely to be the RMMs tools themselves but just browsing to the website(s)
+let InitiatingProcessFileNameFilter = dynamic(['chrome.exe','msedge.exe','firefox.exe','iexplore.exe','outlook.exe','intelconnectivitynetworkservice.exe','senseimdscollector.exe','servicehub.host.dotnet.x64.exe','svchost.exe']);
+let RMMsObservedBaseline = DeviceNetworkEvents
+// Set the baseline time period
+| where TimeGenerated >= ago(7d) and TimeGenerated <= ago(1h)
+| where RemoteUrl has_any(RMMUrl)
+| where ActionType == "ConnectionSuccess"
+// Normalise RemoteUrl and InitiatingProcessFileName by forcing to lowercase 
+| extend RemoteUrl = tolower(RemoteUrl)
+| extend InitiatingProcessFileName = tolower(InitiatingProcessFileName)
+// Filter out expected RMM tools
+| where not (RemoteUrl has_any(ApprovedRMMDomain))
+| where not (InitiatingProcessFileName has_any(ApprovedRMMFileName))
+// Filter out false positives 
+| where not (InitiatingProcessFileName has_any (InitiatingProcessFileNameFilter))
+| where not (DeviceName == "DeviceName" and InitiatingProcessCommandLine contains "processname") // add devicename and processname
+// Select the most recent matching connection for each device
+| summarize arg_max(TimeGenerated, *) by DeviceId
+| project TimeGenerated,DeviceName,InitiatingProcessAccountUpn,InitiatingProcessCommandLine,InitiatingProcessFileName,InitiatingProcessFolderPath;
+let RMMsObservedRecently = DeviceNetworkEvents
+// Set the time period to compare against the baseline
+| where TimeGenerated > ago(1h)
+| where RemoteUrl has_any(RMMUrl)
+| where ActionType == "ConnectionSuccess"
+// Normalise RemoteUrl and InitiatingProcessFileName by forcing to lowercase 
+| extend RemoteUrl = tolower(RemoteUrl)
+| extend InitiatingProcessFileName = tolower(InitiatingProcessFileName)
+// Filter out expected RMM tools
+| where not (RemoteUrl has_any(ApprovedRMMDomain))
+| where not (InitiatingProcessFileName has_any(ApprovedRMMFileName))
+// Filter out false positives 
+| where not (InitiatingProcessFileName has_any (InitiatingProcessFileNameFilter))
+| where not (DeviceName == "devicename" and InitiatingProcessCommandLine contains "processname") // add devicename and processname for tunning
+// Select the most recent matching connection for each device
+| summarize arg_max(TimeGenerated, *) by DeviceId
+| project TimeGenerated,DeviceName,InitiatingProcessAccountUpn,InitiatingProcessCommandLine,InitiatingProcessFileName,InitiatingProcessFolderPath,RemoteUrl;
+RMMsObservedBaseline
+// Project matches where RMMs seen in the last hour but not in the last week, based on distinct DeviceName and InitiatingProcessFileName
+| join kind=rightanti (RMMsObservedRecently) on DeviceName,InitiatingProcessFileName
