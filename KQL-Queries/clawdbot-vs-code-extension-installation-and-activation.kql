@@ -1,20 +1,140 @@
-// Detect ClawdBot extension installation and activation
+// Name: ClawdBot Detection - Analyst-Friendly Production Version
+// Author: Rudra Verma - CyberHawk
+// Date: 2026-02-09
+// Description: Comprehensive detection with detailed context for investigation
+
+let BadProcesses = dynamic(["openclaw", "clawhub", "moltbot", "clawdbot"]);
+let MaliciousC2 = dynamic([
+    "clawdbot.getintwopc.site",
+    "darkgptprivate.com",
+    "getintwopc.site"
+]);
+
+// Collect all threat indicators with RICH DETAILS
 DeviceFileEvents
-| where Timestamp > ago(30d)
-| where FolderPath has_any (@".vscode\extensions\clawdbot", @"AppData\Local\Programs\Microsoft VS Code")
+| where TimeGenerated > ago(30d)
+| where FolderPath has_any (".vscode\\extensions\\clawdbot", ".vscode\\extensions\\moltbot", ".vscode\\extensions\\openclaw")
 | where FileName in~ ("extension.js", "package.json", "run.bat")
-| extend ExtensionPath = FolderPath
-| join kind=inner (
+| where ActionType in ("FileCreated", "FileModified")
+| extend 
+    ThreatType = "ExtensionInstallation",
+    UserAccount = InitiatingProcessAccountName,
+    ThreatDetails = strcat("📁 File: ", FileName, " | Path: ", FolderPath, " | Action: ", ActionType)
+| project TimeGenerated, DeviceName, UserAccount, ThreatType, ThreatDetails
+| union (
     DeviceProcessEvents
-    | where Timestamp > ago(30d)
-    | where ProcessCommandLine has_any ("Code.exe", "code.exe")
-) on DeviceId
-| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName
+    | where TimeGenerated > ago(30d)
+    | where FileName has_any (BadProcesses) or ProcessCommandLine has_any (BadProcesses)
+    | extend 
+        ThreatType = "MaliciousProcess",
+        UserAccount = AccountName,
+        ThreatDetails = strcat(
+            "🔴 Process: ", FileName,
+            " | Parent: ", InitiatingProcessFileName,
+            " | CmdLine: ", substring(ProcessCommandLine, 0, 120),
+            " | User: ", AccountName
+        )
+    | project TimeGenerated, DeviceName, UserAccount, ThreatType, ThreatDetails
+)
+| union (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(30d)
+    | where InitiatingProcessFileName =~ "Code.exe"
+    | where RemoteUrl has_any (MaliciousC2)
+    | where ActionType == "ConnectionSuccess"
+    | extend 
+        ThreatType = "VSCodeC2",
+        UserAccount = InitiatingProcessAccountName,
+        DetectedProtocol = case(
+            RemotePort == 443, "HTTPS",
+            RemotePort == 80, "HTTP",
+            RemotePort == 8443, "HTTPS",
+            RemotePort == 8080, "HTTP",
+            strcat("Port:", RemotePort)
+        ),
+        ThreatDetails = strcat(
+            "🌐 VS Code → C2: ", RemoteUrl,
+            " | IP: ", RemoteIP,
+            " | Protocol: ", 
+            case(
+                RemotePort == 443, "HTTPS",
+                RemotePort == 80, "HTTP",
+                RemotePort == 8443, "HTTPS",
+                RemotePort == 8080, "HTTP",
+                strcat("Port:", RemotePort)
+            ),
+            " | Type: ", RemoteIPType
+        )
+    | project TimeGenerated, DeviceName, UserAccount, ThreatType, ThreatDetails
+)
+| union (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(30d)
+    | where InitiatingProcessFileName has_any (BadProcesses)
+    | where RemoteIPType == "Public"
+    | extend 
+        ThreatType = "ProcessC2",
+        UserAccount = InitiatingProcessAccountName,
+        ThreatDetails = strcat(
+            "⚠️ Process ", InitiatingProcessFileName, " → ",
+            RemoteUrl, " (", RemoteIP, ":", RemotePort, ")"
+        )
+    | project TimeGenerated, DeviceName, UserAccount, ThreatType, ThreatDetails
+)
+// AGGREGATE WITH DETAILED BREAKDOWN
 | summarize 
-    FirstSeen = min(Timestamp),
-    LastSeen = max(Timestamp),
-    FileCount = count(),
-    UniqueFiles = make_set(FileName)
-    by DeviceName, AccountName, FolderPath
-| where FileCount >= 2
-| order by FirstSeen desc
+    TotalEvents = count(),
+    UniqueThreatTypes = dcount(ThreatType),
+    ThreatTypesList = make_set(ThreatType),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    DetailedTimeline = make_list(strcat(format_datetime(TimeGenerated, 'MM-dd HH:mm:ss'), " - ", ThreatDetails), 20),
+    ExtensionFiles = make_set_if(ThreatDetails, ThreatType == "ExtensionInstallation", 10),
+    MaliciousProcesses = make_set_if(ThreatDetails, ThreatType == "MaliciousProcess", 20),
+    VSCodeC2Connections = make_set_if(ThreatDetails, ThreatType == "VSCodeC2", 10),
+    ProcessC2Connections = make_set_if(ThreatDetails, ThreatType == "ProcessC2", 10)
+    by DeviceName, UserAccount
+| extend DaysActive = datetime_diff('day', LastSeen, FirstSeen)
+| extend Severity = case(
+    UniqueThreatTypes >= 3, "Critical",
+    ThreatTypesList has_any ("VSCodeC2", "ProcessC2"), "High",
+    ThreatTypesList has "MaliciousProcess", "High",
+    "Medium"
+)
+| extend RequiresIsolation = case(
+    Severity == "Critical", "YES - Multiple Indicators",
+    Severity == "High" and DaysActive > 3, "YES - Persistent",
+    Severity == "High", "URGENT - Investigate",
+    "NO - Monitor"
+)
+| extend InvestigationSteps = case(
+    UniqueThreatTypes >= 3,
+        "1) Isolate device immediately. 2) Review ProcessC2Connections for data exfil. 3) Extract VSCodeC2Connections for IOC blocking. 4) Check MaliciousProcesses for persistence mechanisms.",
+    ThreatTypesList has "VSCodeC2",
+        "1) Review VSCodeC2Connections for C2 domains. 2) Check user's recent code commits for data theft. 3) Verify ExtensionFiles installation source. 4) Hunt for similar extensions on other devices.",
+    ThreatTypesList has "MaliciousProcess",
+        "1) Review MaliciousProcesses for command lines. 2) Identify parent processes. 3) Check for scheduled tasks/services. 4) Search for similar processes across environment.",
+    "1) Verify ExtensionFiles with user. 2) Monitor for 48h for C2/process activity. 3) Review user's recent VS Code activity."
+)
+| extend ThreatSummary = strcat(
+    "🎯 ", Severity, " severity threat detected on ", DeviceName, " for user ", UserAccount, ". ",
+    "Active for ", DaysActive, " days with ", TotalEvents, " events across ",
+    UniqueThreatTypes, " threat categories: ", tostring(ThreatTypesList), "."
+)
+| project 
+    RequiresIsolation,
+    Severity,
+    ThreatSummary,
+    InvestigationSteps,
+    FirstSeen,
+    LastSeen,
+    DaysActive,
+    DeviceName,
+    UserAccount,
+    TotalEvents,
+    ExtensionFiles,
+    MaliciousProcesses,
+    VSCodeC2Connections,
+    ProcessC2Connections,
+    DetailedTimeline
+| sort by Severity desc, TotalEvents desc
