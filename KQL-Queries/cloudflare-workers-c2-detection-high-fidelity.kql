@@ -1,0 +1,97 @@
+// Cloudflare Workers C2 Detection (High Fidelity)
+// Author: Rudra Verma - CyberHawk
+// Date: 2026-02-10
+// MITRE ATT&CK: T1584.007 (Compromise Infrastructure: Serverless)
+// Description: Detects malicious Cloudflare Workers C2
+
+let SpecificMaliciousWorkers = dynamic([
+    "qgtxtebl.workers.dev"  // Known malicious from CVE-2025-59287
+]);
+let MaliciousIPs = dynamic([
+    "34.186.53.37"
+]);
+let SuspiciousProcesses = dynamic([
+    "WsusService.exe",
+    "curl.exe",
+    "certutil.exe",
+    "bitsadmin.exe",
+    "Velociraptor.exe",
+    "msiexec.exe"
+]);
+
+DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+// OPTION 1: Specific known-bad Workers domain
+| where RemoteUrl has_any (SpecificMaliciousWorkers)
+    or RemoteIP in (MaliciousIPs)
+    // OPTION 2: Generic .workers.dev BUT only from suspicious processes
+    or (RemoteUrl endswith ".workers.dev" and InitiatingProcessFileName in~ (SuspiciousProcesses))
+| where ActionType == "ConnectionSuccess"
+| extend 
+    ThreatType = case(
+        RemoteUrl has "qgtxtebl.workers.dev", "Known Malicious Worker",
+        RemoteIP == "34.186.53.37", "Known C2 IP",
+        InitiatingProcessFileName =~ "WsusService.exe", "WSUS RCE Activity",
+        InitiatingProcessFileName =~ "Velociraptor.exe", "Velociraptor C2",
+        InitiatingProcessFileName in~ ("curl.exe", "certutil.exe"), "Download Utility to Workers",
+        "Suspicious Workers Connection"
+    ),
+    ThreatDetails = strcat(
+        "🌐 ", InitiatingProcessFileName, " → ",
+        RemoteUrl, " (", RemoteIP, ":", RemotePort, ")"
+    )
+| summarize 
+    ConnectionCount = count(),
+    FirstConnection = min(TimeGenerated),
+    LastConnection = max(TimeGenerated),
+    C2Domains = make_set(RemoteUrl, 10),
+    C2IPs = make_set(RemoteIP),
+    ThreatTypes = make_set(ThreatType),
+    InitiatingProcesses = make_set(InitiatingProcessFileName),
+    ConnectionTimeline = make_list(strcat(format_datetime(TimeGenerated, 'MM-dd HH:mm'), ": ", ThreatDetails), 20)
+    by DeviceName, InitiatingProcessAccountName
+| extend 
+    DaysActive = datetime_diff('day', LastConnection, FirstConnection),
+    Severity = case(
+        ThreatTypes has_any ("Known Malicious Worker", "WSUS RCE Activity"), "Critical",
+        ThreatTypes has "Velociraptor C2", "High",
+        ConnectionCount >= 20, "High",
+        "Medium"
+    )
+| extend RequiresIsolation = case(
+    Severity == "Critical", "YES - Known Malicious Infrastructure",
+    Severity == "High" and DaysActive > 3, "YES - Persistent Threat",
+    "INVESTIGATE"
+)
+| extend ThreatSummary = strcat(
+    "🚨 Suspicious Cloudflare Workers activity: ", ConnectionCount, " connections to ",
+    tostring(C2Domains), " over ", DaysActive, " days. ",
+    "Threat types: ", tostring(ThreatTypes), ". ",
+    "Processes: ", tostring(InitiatingProcesses), "."
+)
+| extend InvestigationSteps = case(
+    ThreatTypes has "WSUS RCE Activity",
+        "1) CRITICAL: WSUS Service connecting to Workers = active CVE-2025-59287 exploitation. ISOLATE IMMEDIATELY. 2) Check for Velociraptor in C:\\Program Files\\Velociraptor. 3) Review ConnectionTimeline for payload downloads. 4) Patch WSUS server. 5) Full forensic triage.",
+    ThreatTypes has "Velociraptor C2",
+        "1) ISOLATE device - Velociraptor using Workers as C2 channel. 2) Review ConnectionTimeline for beaconing patterns. 3) Check C:\\Program Files\\Velociraptor\\client.config.yaml for C2 config. 4) Hunt for lateral movement.",
+    ThreatTypes has "Download Utility to Workers",
+        "1) Review ConnectionTimeline for what was downloaded. 2) Check InitiatingProcesses parent processes (should NOT be WSUS/Velociraptor). 3) Verify C2Domains legitimacy with user/IT. 4) If confirmed malicious, isolate and hunt.",
+    "1) Verify C2Domains against known legitimate Workers apps. 2) Check InitiatingProcesses for legitimacy. 3) Review ConnectionTimeline for unusual patterns. 4) Correlate with WSUS/Velociraptor detections."
+)
+| project 
+    RequiresIsolation,
+    Severity,
+    ThreatSummary,
+    InvestigationSteps,
+    FirstConnection,
+    LastConnection,
+    DaysActive,
+    DeviceName,
+    InitiatingProcessAccountName,
+    ConnectionCount,
+    ThreatTypes,
+    C2Domains,
+    C2IPs,
+    InitiatingProcesses,
+    ConnectionTimeline
+| sort by Severity desc, ConnectionCount desc
