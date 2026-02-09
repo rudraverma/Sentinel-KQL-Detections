@@ -1,0 +1,84 @@
+// Name: Velociraptor DFIR Tool Deployment and Abuse
+// Author: Rudra Verma - CyberHawk
+// Date: 2026-02-10
+// MITRE ATT&CK: T1569.002 (Service Execution)
+// Description: Detects Velociraptor installation, service creation, and suspicious activity
+let VelociraptorPaths = dynamic([
+    "C:\\Program Files\\Velociraptor\\",
+    "C:\\ProgramData\\Velociraptor\\",
+    "\\Velociraptor\\"
+]);
+// Detect Velociraptor file operations
+let VelociraptorFiles = 
+    DeviceFileEvents
+    | where TimeGenerated > ago(30d)
+    | where FolderPath has_any (VelociraptorPaths)
+        or FileName =~ "Velociraptor.exe"
+        or FileName endswith "client.config.yaml"
+    | where ActionType in ("FileCreated", "FileModified")
+    | summarize 
+        FirstFileSeen = min(TimeGenerated),
+        VelociraptorFiles = make_set(strcat(FolderPath, "\\", FileName), 10)
+        by DeviceId, DeviceName;
+// Detect Velociraptor process execution
+let VelociraptorExecution = 
+    DeviceProcessEvents
+    | where TimeGenerated > ago(30d)
+    | where FileName =~ "Velociraptor.exe"
+        or ProcessCommandLine has_any ("Velociraptor", "client.config.yaml")
+    | summarize 
+        FirstExec = min(TimeGenerated),
+        LastExec = max(TimeGenerated),
+        ExecCount = count(),
+        CommandLines = make_set(substring(ProcessCommandLine, 0, 250), 10),
+        ParentProcesses = make_set(InitiatingProcessFileName)
+        by DeviceId, DeviceName, AccountName;
+// Detect Velociraptor spawning suspicious processes
+let VelociraptorChildProcesses = 
+    DeviceProcessEvents
+    | where TimeGenerated > ago(30d)
+    | where InitiatingProcessFileName =~ "Velociraptor.exe"
+    | where FileName in~ ("powershell.exe", "cmd.exe", "curl.exe", "wget.exe")
+    | summarize 
+        ChildProcessCount = count(),
+        ChildProcesses = make_set(FileName),
+        ChildCommandLines = make_set(substring(ProcessCommandLine, 0, 200), 10)
+        by DeviceId, DeviceName;
+// Correlate all indicators
+VelociraptorFiles
+| join kind=inner (VelociraptorExecution) on DeviceId, DeviceName
+| join kind=leftouter (VelociraptorChildProcesses) on DeviceId, DeviceName
+| extend 
+    DaysActive = datetime_diff('day', LastExec, FirstFileSeen),
+    HasSuspiciousChildren = iff(isnotempty(ChildProcesses), true, false)
+| extend Severity = case(
+    HasSuspiciousChildren == true, "Critical",
+    ExecCount >= 5, "High",
+    "Medium"
+)
+| extend RequiresIsolation = iff(Severity in ("Critical", "High"), "YES - Velociraptor Abuse Detected", "INVESTIGATE")
+| extend ThreatSummary = strcat(
+    " Velociraptor DFIR tool detected on ", DeviceName, ". ",
+    "Executed ", ExecCount, " times over ", DaysActive, " days. ",
+    iff(HasSuspiciousChildren, strcat("Spawned suspicious processes: ", tostring(ChildProcesses), ". "), ""),
+    "Likely post-exploitation tool abuse following WSUS RCE."
+)
+| extend InvestigationSteps = "1) ISOLATE device - Velociraptor provides full remote access. 2) Review CommandLines for C2 server configuration. 3) Check VelociraptorFiles for client.config.yaml and extract C2 details. 4) Review ChildCommandLines for payloads downloaded. 5) Hunt for Cloudflare Workers domains in network logs. 6) Check for VS Code tunnel installations."
+| project 
+    RequiresIsolation,
+    Severity,
+    ThreatSummary,
+    InvestigationSteps,
+    FirstFileSeen,
+    LastExec,
+    DaysActive,
+    DeviceName,
+    AccountName,
+    ExecCount,
+    VelociraptorFiles,
+    CommandLines,
+    ParentProcesses,
+    ChildProcessCount,
+    ChildProcesses,
+    ChildCommandLines
+| sort by Severity desc, ExecCount desc
