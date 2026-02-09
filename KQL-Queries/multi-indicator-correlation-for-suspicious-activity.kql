@@ -1,36 +1,144 @@
-// Correlate multiple IOCs for high-confidence detection
-let FileIndicators = DeviceFileEvents
-| where Timestamp > ago(30d)
-| where FolderPath has_any (@"\Temp\Lightshot\", @"ScreenConnect Client", @".vscode\extensions\clawdbot")
-| summarize FileEvents = count() by DeviceName, AccountName;
-let NetworkIndicators = DeviceNetworkEvents
-| where Timestamp > ago(30d)
-| where RemoteUrl has_any ("meeting.bulletmailer.net", "clawdbot.getintwopc.site", "darkgptprivate.com")
-    or RemoteIP in ("179.43.176.32", "178.16.54.253")
-    or RemotePort == 8041
-| summarize NetworkEvents = count() by DeviceName, AccountName;
-let ProcessIndicators = DeviceProcessEvents
-| where Timestamp > ago(30d)
-| where (FileName =~ "Code.exe" and FolderPath !has "Microsoft VS Code")
-    or FileName has "ScreenConnect"
-| summarize ProcessEvents = count() by DeviceName, AccountName;
-FileIndicators
-| join kind=inner NetworkIndicators on DeviceName, AccountName
-| join kind=inner ProcessIndicators on DeviceName, AccountName
-| extend TotalIndicators = FileEvents + NetworkEvents + ProcessEvents
+// Name: Multi-IOC Correlation - Context-Aware Threat Detection
+// Author: Rudra Verma - CyberHawk
+// Date: 2026-02-09
+// Description: Detects suspicious combinations of file, network, and process activity with investigative context
+// Key Improvement: Only alerts on COMBINATIONS of IOCs, not individual matches
+
+let timeframe = 30d;
+let minIOCTypes = 2;  // Require at least 2 different IOC types (reduces FPs)
+// 1. FILE INDICATORS - Suspicious paths/files
+let FileIOCs = 
+    DeviceFileEvents
+    | where TimeGenerated > ago(timeframe)
+    | where FolderPath has_any (
+        "\\Temp\\Lightshot\\",      // Screenshot tool abuse
+        "ScreenConnect Client",      // Remote access tool
+        ".vscode\\extensions\\clawdbot"  // Malicious VS Code extension
+    )
+    | where ActionType in ("FileCreated", "FileModified")  // Only creation/modification
+    | extend 
+        IOCType = "SuspiciousFile",
+        IOCSubType = case(
+            FolderPath has "Lightshot", "ScreenshotTool",
+            FolderPath has "ScreenConnect", "RemoteAccessTool",
+            FolderPath has "clawdbot", "MaliciousExtension",
+            "Unknown"
+        ),
+        UserAccount = InitiatingProcessAccountName
+    | project TimeGenerated, DeviceName, UserAccount, IOCType, IOCSubType,
+              Details = strcat("File: ", FileName, " in ", FolderPath),
+              InitiatingProcess = InitiatingProcessFileName;
+
+// 2. NETWORK INDICATORS - C2 communication
+let NetworkIOCs = 
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(timeframe)
+    | where RemoteUrl has_any (
+        "meeting.bulletmailer.net",   // Known C2 domain
+        "clawdbot.getintwopc.site",   // Malicious extension backend
+        "darkgptprivate.com"          // Suspicious AI service
+    )
+    or RemoteIP in ("179.43.176.32", "178.16.54.253")  // Known malicious IPs
+    or (RemotePort == 8041 and RemoteIP !has "10." and RemoteIP !has "192.168.")  // Unusual port
+    | where ActionType == "ConnectionSuccess"  // Only successful connections
+    | extend 
+        IOCType = "SuspiciousNetwork",
+        IOCSubType = case(
+            RemoteUrl has "bulletmailer", "C2Domain",
+            RemoteUrl has "clawdbot", "MaliciousExtensionC2",
+            RemotePort == 8041, "UnusualPort",
+            "MaliciousIP"
+        ),
+        UserAccount = InitiatingProcessAccountName
+    | project TimeGenerated, DeviceName, UserAccount, IOCType, IOCSubType,
+              Details = strcat("Connection to ", RemoteUrl, " (", RemoteIP, ":", RemotePort, ")"),
+              InitiatingProcess = InitiatingProcessFileName;
+
+// 3. PROCESS INDICATORS - Suspicious execution patterns
+let ProcessIOCs = 
+    DeviceProcessEvents
+    | where TimeGenerated > ago(timeframe)
+    | where (
+        // Fake VS Code (not in legitimate path)
+        (FileName =~ "Code.exe" and FolderPath !has "Microsoft VS Code" and FolderPath !has "Program Files")
+        // ScreenConnect remote access
+        or FileName has "ScreenConnect"
+        // Renamed system utilities (living off the land)
+        or (FileName in~ ("cmd.exe", "powershell.exe", "wscript.exe") 
+            and FolderPath !startswith "C:\\Windows\\")
+    )
+    | extend 
+        IOCType = "SuspiciousProcess",
+        IOCSubType = case(
+            FileName =~ "Code.exe" and FolderPath !has "Program Files", "FakeVSCode",
+            FileName has "ScreenConnect", "RemoteAccessExecution",
+            "SuspiciousExecution"
+        ),
+        UserAccount = AccountName
+    | project TimeGenerated, DeviceName, UserAccount, IOCType, IOCSubType,
+              Details = strcat("Process: ", FileName, " | CmdLine: ", substring(ProcessCommandLine, 0, 100)),
+              InitiatingProcess = InitiatingProcessFileName;
+
+// 4. CORRELATE ALL IOCs
+let AllIOCs = FileIOCs | union NetworkIOCs | union ProcessIOCs;
+AllIOCs
+| summarize 
+    TotalIOCs = count(),
+    UniqueIOCTypes = dcount(IOCType),
+    IOCTypesList = make_set(IOCType),
+    IOCSubTypes = make_set(IOCSubType),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    Timeline = make_list(strcat(format_datetime(TimeGenerated, 'MM-dd HH:mm'), ": ", IOCSubType), 50),
+    IOCDetails = make_set(Details, 30),
+    ProcessChain = make_set(InitiatingProcess, 10)
+    by DeviceName, UserAccount
+| extend DaysActive = datetime_diff('day', LastSeen, FirstSeen)
+// CRITICAL: Only alert if MULTIPLE IOC TYPES are present
+| where UniqueIOCTypes >= minIOCTypes
+// ADVANCED RISK SCORING
 | extend ThreatScore = case(
-    TotalIndicators >= 10, "Critical",
-    TotalIndicators >= 5, "High",
-    TotalIndicators >= 3, "Medium",
+    // Critical: Network + File + Process (full attack chain)
+    UniqueIOCTypes >= 3 and IOCSubTypes has_any ("C2Domain", "MaliciousExtensionC2"), "Critical",
+    // High: Network C2 + suspicious process
+    IOCSubTypes has_any ("C2Domain", "MaliciousExtensionC2") and IOCSubTypes has "FakeVSCode", "High",
+    // High: ScreenConnect + network activity
+    IOCSubTypes has "RemoteAccessTool" and IOCSubTypes has "SuspiciousNetwork", "High",
+    // Medium: 2 IOC types but no C2
+    UniqueIOCTypes == 2, "Medium",
     "Low"
 )
-| where ThreatScore in ("Critical", "High")
+| where ThreatScore in ("Critical", "High", "Medium")
+// CONTEXT-BASED ISOLATION LOGIC
+| extend RequiresIsolation = case(
+    ThreatScore == "Critical" and IOCSubTypes has_any ("C2Domain", "MaliciousExtensionC2"), "YES - Active C2",
+    ThreatScore == "High" and DaysActive > 7, "YES - Persistent Threat",
+    ThreatScore == "High" and TotalIOCs > 20, "YES - High Activity",
+    "NO - Monitor Only"
+)
+// ANALYST-FRIENDLY OUTPUT
+| extend AnalystNotes = case(
+    IOCSubTypes has "MaliciousExtension" and IOCSubTypes has "MaliciousExtensionC2", 
+        "Malicious VS Code extension 'clawdbot' with active C2 communication",
+    IOCSubTypes has "RemoteAccessTool" and IOCSubTypes has "SuspiciousNetwork", 
+        "ScreenConnect remote access tool with suspicious network activity",
+    IOCSubTypes has "FakeVSCode" and IOCSubTypes has "C2Domain",
+        "Fake VS Code binary communicating with C2 infrastructure",
+    "Multiple suspicious indicators detected - manual review required"
+)
 | project 
+    RequiresIsolation,
+    ThreatScore,
+    AnalystNotes,
+    FirstSeen,
+    LastSeen,
+    DaysActive,
     DeviceName,
-    AccountName,
-    FileEvents,
-    NetworkEvents,
-    ProcessEvents,
-    TotalIndicators,
-    ThreatScore
-| order by TotalIndicators desc
+    UserAccount,
+    TotalIOCs,
+    UniqueIOCTypes,
+    IOCSubTypes,
+    Timeline,
+    IOCDetails,
+    ProcessChain
+| sort by ThreatScore desc, TotalIOCs desc
