@@ -1,0 +1,16 @@
+//Repo - T1219 - Use of unauthorized RMM access via PowerShell or CMD
+let RMMList = externaldata(URI: string, RMMTool: string)
+  [h'https://raw.githubusercontent.com/magicsword-io/LOLRMM/main/website/public/api/rmm_domains.csv']
+   with(format='csv', ignoreFirstRecord=true);
+let RMMUrl = RMMList | project URI;
+DeviceNetworkEvents
+| where ActionType == "ConnectionSuccess"
+| where RemoteUrl has_any(RMMUrl)
+| project TimeGenerated, DeviceName, RemoteIP, RemotePort, RemoteUrl, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountUpn
+| join kind=inner (
+    DeviceProcessEvents
+    | where InitiatingProcessFileName in~ ("cmd.exe", "powershell.exe")
+    | where InitiatingProcessCommandLine != '"add ps1 that you want to bypass"'
+    | project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, ProcessId, InitiatingProcessId, InitiatingProcessAccountUpn
+) on DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by TimeGenerated desc
