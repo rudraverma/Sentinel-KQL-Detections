@@ -1,0 +1,40 @@
+
+//Repo - T1021.001 Suspicious Changes to RDP Configurations via Registry and Netsh.exe
+// OVERVIEW
+// TTP [1021.001]
+// DS [DeviceProcessEvents]
+// T1021.001 Suspicious Changes to RDP Configurations via Registry and Netsh.exe
+DeviceProcessEvents
+| where ProcessVersionInfoOriginalFileName =~ "reg.exe" or ProcessVersionInfoOriginalFileName =~ "netsh.exe"
+| where (ProcessCommandLine contains "add" and (
+    // 1. Detection for enabling RDP by setting fDenyTSConnections to 0
+    ProcessCommandLine contains "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services" and
+    ProcessCommandLine contains "/v fDenyTSConnections" and
+    ProcessCommandLine contains "/d 0" and
+    ProcessCommandLine contains "/f" and
+    ProcessCommandLine contains "/t REG_DWORD")) or (ProcessCommandLine contains "add" and (
+    // 2. Detection for modifying UserAuthentication setting in RDP-Tcp
+    ProcessCommandLine contains "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp" and
+    ProcessCommandLine contains "/v UserAuthentication" and
+    ProcessCommandLine contains "/d 0" and
+    ProcessCommandLine contains "/f" and
+    ProcessCommandLine contains "/t REG_DWORD")) or (ProcessCommandLine contains "add" and (
+    // 3. Detection for adding a firewall rule to allow RDP traffic (port 3389)
+    ProcessCommandLine contains "firewall" and
+    ProcessCommandLine contains "tcp" and
+    ProcessCommandLine contains "3389" and
+    ProcessCommandLine contains "advfirewall" and
+    ProcessCommandLine contains "rule" and
+    ProcessCommandLine contains "allow"
+    ))
+| project
+    TimeGenerated,
+    DeviceName,
+    AccountDomain,
+    AccountName,
+    FileName,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessParentFileName
+// Tuning known benign positives via InitiatingProcessParentFileName
+| where InitiatingProcessParentFileName !in ("ADD FILE NAMES")
