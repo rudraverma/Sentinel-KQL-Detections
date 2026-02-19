@@ -1,0 +1,31 @@
+
+
+////KQL to find out the guest user invited to AAD from novel domains////
+AuditLogs
+| where ActivityDisplayName == "Invite external user"
+| extend InitiatedByRaw = tostring(InitiatedBy)
+| extend InitiatedByUser = parse_json(InitiatedByRaw)
+| extend initiatedBy = iff(isnull(InitiatedByUser.user.userPrincipalName), tostring(InitiatedByUser.app.displayName), tostring(InitiatedByUser.user.userPrincipalName))
+| extend InvitedUser = tostring(AdditionalDetails[5].value)
+| extend InvitedUserDomain = tostring(split(InvitedUser, "@")[1])
+| where InvitedUserDomain in~ (
+    "gmail.com", "outlook.com", "hotmail.com", "live.com", "yahoo.com",
+    "icloud.com", "aol.com", "mail.com", "protonmail.com", "zoho.com",
+    "gmx.com", "yandex.com", "tuta.com", "fastmail.com", "msn.com",
+    "ymail.com", "qq.com", "163.com", "126.com", "mail.ru",
+    "web.de", "t-online.de", "naver.com", "rediffmail.com",
+    "libero.it", "freenet.de", "comcast.net", "xtra.co.nz"
+)
+| extend InvitationMethod = tostring(AdditionalDetails[6].value)
+| extend Location = tostring(AdditionalDetails[2].value)
+| extend DeviceDetail = tostring(AdditionalDetails[3].value)
+| extend UserAgent = tostring(AdditionalDetails[4].value)
+| extend ObjectId = tostring(TargetResources[0].id)
+| extend RefObjectId = iff(isnull(InitiatedByUser.user.id), tostring(InitiatedByUser.app.id), tostring(InitiatedByUser.user.id))
+| where initiatedBy != "Microsoft.Azure.SyncFabric"
+| where Result != 'clientError'
+| extend AccountCustomEntity = initiatedBy
+| extend AccountCustomEntity2 = InvitedUser
+| extend AzureResourceId = ObjectId
+| project TimeGenerated, initiatedBy, InvitedUser, InvitedUserDomain, InvitationMethod, Location, DeviceDetail, UserAgent, ObjectId, RefObjectId, Result, ActivityDisplayName, LoggedByService
+| order by TimeGenerated desc
