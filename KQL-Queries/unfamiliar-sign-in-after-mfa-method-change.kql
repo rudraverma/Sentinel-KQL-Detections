@@ -1,0 +1,39 @@
+
+//Repo - T1078 - Unfamiliar sign in after MFA change
+// Look for cases where an unfamiliar sign in alert has occurred after an admin has changed the MFA method
+let lookbacktime = ago(1h);
+let userIDs = (SecurityAlert // first get user entities for which there have been unfamiliar sign-in properties recently
+| where TimeGenerated >= lookbacktime
+| where DisplayName == 'Unfamiliar sign-in properties'
+| extend AadUserId = extract('AadUserId":"([^"]+)', 1, Entities)
+| distinct AadUserId);
+let userUPNs = (IdentityInfo // second get UPNs for those user entities
+| join kind=inner userIDs on $left.AccountObjectId == $right.AadUserId
+| distinct AccountUPN
+| extend UPNsofInterest = AccountUPN
+| project UPNsofInterest);
+let mfaChanges = (AuditLogs // third look at audit logs for those user entities
+| where TimeGenerated >= lookbacktime
+| extend UserPrincipalName = tostring(TargetResources[0].userPrincipalName)
+| join kind=inner userUPNs on $left.UserPrincipalName == $right.UPNsofInterest
+| where Category == 'UserManagement'
+| where OperationName == 'Admin updated security info' // where an admin has updated their MFA methods
+| extend Target = tolower(tostring(TargetResources[0].userPrincipalName))
+| extend Actor = parse_json(InitiatedBy.user).userPrincipalName
+| extend modifiedProperties = TargetResources[0].modifiedProperties
+| extend PreviousPhoneNumber = modifiedProperties[2].oldValue
+| extend NewPhoneNumber = modifiedProperties[2].newValue
+| order by TimeGenerated asc
+| project TimeGenerated,Target,Actor,ResultReason,PreviousPhoneNumber,NewPhoneNumber);
+let userSigninsBeforeMfaChange = (mfaChanges
+| join kind=inner SigninLogs on $left.Target == $right.UserPrincipalName
+| where TimeGenerated1 > lookbacktime
+| where TimeGenerated1 < TimeGenerated);
+let userSignInsAfterMfaChange = (mfaChanges
+| join kind=inner SigninLogs on $left.Target == $right.UserPrincipalName
+| where TimeGenerated1 > lookbacktime
+| where TimeGenerated1 > TimeGenerated);
+userSigninsBeforeMfaChange
+| union userSignInsAfterMfaChange, mfaChanges
+| summarize make_set(IPAddress), make_set(tostring(LocationDetails)), make_set(DeviceDetail), make_set(tostring(NetworkLocationDetails)), make_set(UserAgent) by UserPrincipalName
+| where array_length(set_IPAddress) > 1 or array_length(set_LocationDetails) > 1  // where more than one source IP or location seen for this user 
