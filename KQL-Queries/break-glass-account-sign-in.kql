@@ -1,0 +1,5 @@
+//break glass account property changed
+_GetWatchlist('identity')
+| join kind=inner SigninLogs on $left.SearchKey == $right.UserPrincipalName
+|where category contains "Break Glass"
+| distinct  UserPrincipalName, IPAddress, ResourceId, Location, AppDisplayName, AuthenticationRequirement, ClientAppUsed, ConditionalAccessStatus, IsInteractive,TimeGenerated
