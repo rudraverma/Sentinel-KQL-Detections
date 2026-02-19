@@ -1,0 +1,7 @@
+
+//Repo - T1078: Modification of the properties of a break glass account has been identified
+_GetWatchlist('identity')
+|where category contains "Break Glass"
+| join kind=inner (AuditLogs
+| extend userPrincipalName_ = tostring(TargetResources[0].userPrincipalName)) on $left.SearchKey == $right.userPrincipalName_
+|distinct TimeGenerated, userPrincipalName_, OperationName, ActivityDisplayName, Result, AADOperationType
