@@ -1,0 +1,46 @@
+// Name: Signal Phishing Campaign Infrastructure
+// References: https://unit42.paloaltonetworks.com/qr-codes-as-attack-vector/
+// False Positive Sensitivity: Medium. Legitimate traffic to these domains is highly unlikely. However, the domains could become inactive or be sinkholed over time.
+
+let targetedDomains = dynamic([
+    "snitch.open-group.site",
+    "gui.snitch-dev.site",
+    "gui.dev-snitch.site",
+    "gui.snitch-dev.xyz",
+    "gui.dev-snitch.xyz",
+    "gui.snitch-dev.online",
+    "gui.dev-snitch.online",
+    "gui.dev-snitch.cloud",
+    "snitch-dev.space",
+    "gui-snitch.online",
+    "gui-grafit.online",
+    "kropyva-group.online",
+    "sgnl-web.org-status.nl",
+    "signal-qr.org"
+]);
+// Search across multiple network-related tables for broader coverage
+union isfuzzy=true
+    DeviceNetworkEvents,
+    CommonSecurityLog,
+    VMConnection
+// Check if the remote URL or domain is in the list of targeted domains
+| where RemoteUrl has_any (targetedDomains) or RemoteUrl has_any (targetedDomains) or DestinationHost has_any (targetedDomains)
+| extend
+    // Extract domain for consistent field naming
+    Domain = case(
+        isnotempty(RemoteUrl), extract("://([^/]+)", 1, RemoteUrl),
+        isnotempty(DestinationHost), DestinationHost,
+        "Unknown"
+    )
+// Project relevant fields for investigation
+| project
+    TimeGenerated,
+    DeviceName,
+    ActionType,
+    RemoteUrl,
+    RemoteIP,
+    DestinationHost,
+    Domain,
+    InitiatingProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessParentFileName
