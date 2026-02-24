@@ -1,0 +1,143 @@
+// Name: Unit42 QR/Quishing - Signal Targeted Infrastructure (IOC Only)
+// Author: CyberHawk Detection Engg.
+// Date: 2026-02-24
+// Description: IOC-only detection for Signal-targeted phishing infrastructure and explicit phishing destination domains
+//              referenced in Unit 42 QR code attack vector research.
+// Reference: https://unit42.paloaltonetworks.com/qr-codes-as-attack-vector/
+// MITRE ATT&CK: T1566.002 (Spearphishing Link), T1583.001 (Acquire Infrastructure: Domains)
+// False Positive Sensitivity: Low
+
+let Lookback = 30d;
+
+// Signal-targeting domains (your list)
+let SignalTargetedDomains = dynamic([
+  "snitch.open-group.site",
+  "gui.snitch-dev.site",
+  "gui.dev-snitch.site",
+  "gui.snitch-dev.xyz",
+  "gui.dev-snitch.xyz",
+  "gui.snitch-dev.online",
+  "gui.dev-snitch.online",
+  "gui.dev-snitch.cloud",
+  "snitch-dev.space",
+  "gui-snitch.online",
+  "gui-grafit.online",
+  "kropyva-group.online",
+  "sgnl-web.org-status.nl",
+  "signal-qr.org"
+]);
+
+// Explicit phishing destination shown in Unit 42 QR shortener example (phishing page host)
+let Unit42PhishDestinations = dynamic([
+  "cdnimg.jeayacrai.in.net"
+]);
+
+let IOC_Domains = array_concat(SignalTargetedDomains, Unit42PhishDestinations);
+
+// --------------------
+// EmailUrlInfo (your tenant schema uses UrlDomain)
+// --------------------
+let EmailHits =
+EmailUrlInfo
+| where TimeGenerated > ago(Lookback)
+| extend Domain = tolower(tostring(UrlDomain))
+| where Domain in~ (IOC_Domains)
+| project TimeGenerated,
+          Source = "EmailUrlInfo",
+          Domain,
+          Url = tostring(Url),
+          UrlLocation = tostring(UrlLocation),
+          NetworkMessageId = tostring(NetworkMessageId),
+          DeviceName = "",
+          AccountUpn = "",
+          RemoteIP = "",
+          InitiatingProcessFileName = "",
+          InitiatingProcessCommandLine = "";
+
+// --------------------
+// UrlClickEvents (if present)
+// --------------------
+let ClickHits =
+UrlClickEvents
+| where TimeGenerated > ago(Lookback)
+| extend UrlStr = tostring(Url)
+| extend Domain = tolower(tostring(parse_url(UrlStr).Host))
+| where Domain in~ (IOC_Domains)
+| project TimeGenerated,
+          Source = "UrlClickEvents",
+          Domain,
+          Url = UrlStr,
+          UrlLocation = "",
+          NetworkMessageId = "",
+          DeviceName = "",
+          AccountUpn = tostring(coalesce(column_ifexists("AccountUpn",""), column_ifexists("UserPrincipalName",""), column_ifexists("UserId",""))),
+          RemoteIP = "",
+          InitiatingProcessFileName = "",
+          InitiatingProcessCommandLine = "";
+
+// --------------------
+// DeviceNetworkEvents (MDE)
+// --------------------
+let EndpointHits =
+DeviceNetworkEvents
+| where TimeGenerated > ago(Lookback)
+| extend UrlStr = tostring(RemoteUrl)
+| extend Domain = tolower(tostring(parse_url(UrlStr).Host))
+| where Domain in~ (IOC_Domains)
+| project TimeGenerated,
+          Source = "DeviceNetworkEvents",
+          Domain,
+          Url = UrlStr,
+          UrlLocation = "",
+          NetworkMessageId = "",
+          DeviceName = tostring(DeviceName),
+          AccountUpn = tostring(coalesce(column_ifexists("InitiatingProcessAccountUpn",""), column_ifexists("InitiatingProcessAccountName",""))),
+          RemoteIP = tostring(RemoteIP),
+          InitiatingProcessFileName = tostring(InitiatingProcessFileName),
+          InitiatingProcessCommandLine = tostring(InitiatingProcessCommandLine);
+
+// --------------------
+// CommonSecurityLog (Proxy/Firewall/WAF) - fixed parentheses
+// --------------------
+let NetLogHits =
+CommonSecurityLog
+| where TimeGenerated > ago(Lookback)
+| extend Raw = tostring(coalesce(column_ifexists("RequestURL",""), column_ifexists("DestinationHostName",""), column_ifexists("AdditionalExtensions","")))
+| extend Domain = tolower(tostring(
+    case(
+      Raw has "://", tostring(parse_url(Raw).Host),
+      Raw has ".", Raw,
+      ""
+    )
+  ))
+| where Domain in~ (IOC_Domains)
+| project TimeGenerated,
+          Source = "CommonSecurityLog",
+          Domain,
+          Url = Raw,
+          UrlLocation = "",
+          NetworkMessageId = "",
+          DeviceName = tostring(column_ifexists("DeviceName","")),
+          AccountUpn = tostring(coalesce(column_ifexists("SourceUserName",""), column_ifexists("User",""), column_ifexists("Account",""))),
+          RemoteIP = tostring(coalesce(column_ifexists("DestinationIP",""), column_ifexists("RemoteIP",""))),
+          InitiatingProcessFileName = "",
+          InitiatingProcessCommandLine = "";
+
+// --------------------
+// Unified IOC hits
+// --------------------
+union isfuzzy=true EmailHits, ClickHits, EndpointHits, NetLogHits
+| summarize StartTime = min(TimeGenerated),
+            EndTime = max(TimeGenerated),
+            Sources = make_set(Source, 10),
+            UrlSamples = make_set(Url, 20),
+            UrlLocations = make_set(UrlLocation, 10),
+            AnyIP = take_any(RemoteIP),
+            AnyProcess = take_any(InitiatingProcessFileName),
+            AnyCmd = take_any(InitiatingProcessCommandLine)
+  by Domain, DeviceName, AccountUpn
+| project StartTime, EndTime, Domain, DeviceName, AccountUpn, Sources, UrlLocations, UrlSamples, AnyIP, AnyProcess, AnyCmd
+| extend timestamp = StartTime,
+         HostCustomEntity = DeviceName,
+         AccountCustomEntity = AccountUpn,
+         IPAddressCustomEntity = AnyIP
