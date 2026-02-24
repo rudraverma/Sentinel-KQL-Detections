@@ -1,0 +1,24 @@
+// Detection: Sign-in via Legacy Protocol (bypasses MFA/CA)
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1078 - Valid Accounts
+
+let legacyClients = dynamic([
+    "Exchange ActiveSync","IMAP4","MAPI Over HTTP",
+    "SMTP AUTH","POP3","Other clients","Authenticated SMTP",
+    "Exchange Web Services","Outlook Anywhere","IMAP","POP",
+    "AutoDiscover","Exchange Online PowerShell"
+]);
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where ResultType == "0"
+| where ClientAppUsed in (legacyClients)
+| summarize
+    Count      = count(),
+    Apps       = make_set(AppDisplayName, 5),
+    IPList     = make_set(IPAddress, 5),
+    Countries  = make_set(tostring(LocationDetails.countryOrRegion), 5)
+    by UserPrincipalName, ClientAppUsed
+| extend AlertDescription = strcat(
+    "User ", UserPrincipalName,
+    " authenticated via legacy protocol: ", ClientAppUsed,
+    " — MFA cannot be enforced on this client")
