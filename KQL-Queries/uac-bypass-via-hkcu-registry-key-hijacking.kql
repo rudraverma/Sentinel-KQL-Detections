@@ -1,0 +1,22 @@
+// Detection: UAC Bypass via HKCU Registry Key Hijacking
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1548.002 - Bypass User Account Control
+
+let uacBypassKeys = dynamic([
+    "SOFTWARE\\Classes\\ms-settings\\shell\\open\\command",
+    "SOFTWARE\\Classes\\mscfile\\shell\\open\\command",
+    "Environment\\UserInitMprLogonScript",
+    "SOFTWARE\\Classes\\exefile\\shell\\runas\\command\\isolatedCommand",
+    "SOFTWARE\\Classes\\Folder\\shell\\open\\command",
+    "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options"
+]);
+DeviceRegistryEvents
+| where TimeGenerated > ago(1d)
+| where ActionType in ("RegistryValueSet","RegistryKeyCreated")
+| where RegistryKey has_any (uacBypassKeys)
+| project TimeGenerated, DeviceName, ActionType,
+          RegistryKey, RegistryValueName, RegistryValueData,
+          InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| extend AlertDescription = strcat(
+    "UAC Bypass registry key modified: '", RegistryKey,
+    "' by '", InitiatingProcessFileName, "' — privilege escalation attempt")
