@@ -1,0 +1,23 @@
+// Detection: Azure Storage Account Public/Anonymous Access Enabled
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1190 - Exploit Public-Facing Application
+
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where ResourceProviderValue =~ "MICROSOFT.STORAGE"
+| where OperationNameValue has_any (
+    "STORAGEACCOUNTS/WRITE",
+    "STORAGEACCOUNTS/BLOBSERVICES/WRITE"
+)
+| where ActivityStatusValue =~ "Success"
+| extend RequestBody = tostring(todynamic(Properties).requestbody)
+| where RequestBody has_any (
+    "AllowBlobPublicAccess",
+    "\"publicAccess\"",
+    "allowBlobPublicAccess"
+)
+| project TimeGenerated, Caller, CallerIpAddress,
+          OperationNameValue, ResourceGroup,
+          SubscriptionId, RequestBody
+| extend AlertDescription =
+    "Azure Storage public/anonymous blob access may have been enabled — potential data exposure"
