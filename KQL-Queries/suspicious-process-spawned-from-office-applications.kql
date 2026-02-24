@@ -1,0 +1,25 @@
+// Detection: Suspicious Process Spawned from Office Apps (Macro / Phishing)
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1566.001 - Spearphishing Attachment
+
+let officeApps = dynamic([
+    "winword.exe","excel.exe","powerpnt.exe",
+    "outlook.exe","onenote.exe","mspub.exe",
+    "visio.exe","msaccess.exe"
+]);
+let suspiciousChildren = dynamic([
+    "cmd.exe","powershell.exe","pwsh.exe","wscript.exe",
+    "cscript.exe","mshta.exe","regsvr32.exe","rundll32.exe",
+    "certutil.exe","bitsadmin.exe","wmic.exe","schtasks.exe",
+    "whoami.exe","net.exe","netsh.exe","nslookup.exe","curl.exe"
+]);
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName has_any (officeApps)
+| where FileName has_any (suspiciousChildren)
+| project TimeGenerated, DeviceName, FileName,
+          ProcessCommandLine, InitiatingProcessFileName,
+          InitiatingProcessCommandLine, AccountName, AccountDomain, SHA256
+| extend AlertDescription = strcat(
+    "'", FileName, "' spawned by '", InitiatingProcessFileName,
+    "' — potential malicious macro or phishing document execution")
