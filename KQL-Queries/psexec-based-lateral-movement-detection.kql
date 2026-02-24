@@ -1,0 +1,17 @@
+// Detection: PsExec-Based Lateral Movement
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1021.002 - Remote Services: SMB/Windows Admin Shares
+
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName has_any ("psexec.exe","psexec64.exe","paexec.exe")
+    or InitiatingProcessFileName has_any ("psexec.exe","psexesvc.exe","paexec.exe")
+    or ProcessCommandLine has_any (
+        "\\\\admin$","\\\\c$","\\\\ipc$",
+        "psexesvc","PSEXESVC","-accepteula"
+    )
+| project TimeGenerated, DeviceName, FileName,
+          ProcessCommandLine, InitiatingProcessFileName,
+          AccountName, AccountDomain, SHA256
+| extend AlertDescription =
+    "PsExec lateral movement detected — remote code execution via admin shares"
