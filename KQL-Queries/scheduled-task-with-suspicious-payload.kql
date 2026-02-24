@@ -1,0 +1,19 @@
+// Detection: Scheduled Task with Suspicious Payload (Persistence)
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1053.005 - Scheduled Task
+
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has "/create"
+| where ProcessCommandLine has_any (
+    "powershell","cmd.exe","wscript","cscript",
+    "mshta","regsvr32","rundll32","certutil",
+    "bitsadmin","\\AppData\\","\\Temp\\",
+    "\\Users\\Public\\","http://","https://"
+)
+| project TimeGenerated, DeviceName, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          AccountName, AccountDomain, SHA256
+| extend AlertDescription =
+    "Scheduled task created with suspicious executable payload — potential persistence mechanism"
