@@ -1,0 +1,32 @@
+// Name: Quishing - QR Pivot to Suspicious Entra Sign-in (Correlation)
+// Reference: https://unit42.paloaltonetworks.com/qr-codes-as-attack-vector/
+// MITRE ATT&CK: T1566.002, T1078
+let Lookback = 7d;
+let PivotWindow = 30m;
+let DeepLinkIndicators = dynamic(["tg://login","wa.me/settings/linked_devices","signal://","line://"]);
+
+let PivotEvents =
+union isfuzzy=true
+(
+  UrlClickEvents
+  | where TimeGenerated > ago(Lookback)
+  | where tostring(Url) has_any (DeepLinkIndicators)
+  | project PivotTime=TimeGenerated, AccountUpn, PivotUrl=tostring(Url)
+),
+(
+  DeviceNetworkEvents
+  | where TimeGenerated > ago(Lookback)
+  | where tostring(RemoteUrl) has_any (DeepLinkIndicators) or tostring(RemoteUrl) endswith ".apk"
+  | project PivotTime=TimeGenerated, AccountUpn=tostring(InitiatingProcessAccountUpn), PivotUrl=tostring(RemoteUrl)
+);
+
+PivotEvents
+| join kind=inner (
+    SigninLogs
+    | where TimeGenerated > ago(Lookback)
+    | project SigninTime=TimeGenerated, UserPrincipalName, AppDisplayName, ResultType, IPAddress,
+              Location, DeviceDetail, AuthenticationRequirement, ConditionalAccessStatus
+) on $left.AccountUpn == $right.UserPrincipalName
+| where SigninTime between (PivotTime .. PivotTime + PivotWindow)
+| where ResultType == 0  // successful
+| project PivotTime, SigninTime, UserPrincipalName, PivotUrl, AppDisplayName, IPAddress, Location, DeviceDetail, AuthenticationRequirement, ConditionalAccessStatus
