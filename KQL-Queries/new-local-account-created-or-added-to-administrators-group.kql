@@ -1,0 +1,18 @@
+// Detection: New Local Account Created or Added to Administrators Group
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1136.001 - Create Account: Local Account
+
+SecurityEvent
+| where TimeGenerated > ago(1d)
+| where EventID in (4720, 4732, 4728, 4756)
+| where AccountType == "User"
+| extend
+    NewAccount   = TargetUserName,
+    AddedBy      = SubjectUserName,
+    AddedByDomain = SubjectDomainName
+| where (EventID == 4732 and (MemberSid has "S-1-5-32-544" or GroupName =~ "Administrators"))
+    or EventID == 4720
+| project TimeGenerated, EventID, Activity, Computer,
+          NewAccount, AddedBy, AddedByDomain, IpAddress
+| extend AlertDescription =
+    "New local account created or added to Administrators group — verify legitimacy"
