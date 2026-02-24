@@ -1,0 +1,24 @@
+// Detection: OAuth App Consent Grant - Possible Illicit Consent Grant Attack
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1550.001 - Alternate Authentication Material
+
+AuditLogs
+| where TimeGenerated > ago(1d)
+| where OperationName has_any (
+    "Consent to application",
+    "Add app role assignment to service principal",
+    "Add delegated permission grant",
+    "Add OAuth2PermissionGrant"
+)
+| where Result =~ "success"
+| extend
+    TargetApp   = tostring(TargetResources[0].displayName),
+    ConsentedBy = tostring(InitiatedBy.user.userPrincipalName),
+    InitiatingIP = tostring(InitiatedBy.user.ipAddress),
+    Permissions  = tostring(TargetResources[0].modifiedProperties)
+| where isnotempty(TargetApp)
+| project TimeGenerated, OperationName, TargetApp,
+          ConsentedBy, InitiatingIP, Permissions, CorrelationId
+| extend AlertDescription = strcat(
+    "OAuth consent granted to '", TargetApp,
+    "' by '", ConsentedBy, "' — review delegated permissions immediately")
