@@ -1,0 +1,15 @@
+// Name: Quishing - Direct APK Download Observed
+// Author: CyberHawk Detection Engineering
+// Date: 2026-02-24
+// Description: Detects .apk downloads on endpoints (often delivered via QR code scan), which can bypass app store security controls.
+// Reference: https://unit42.paloaltonetworks.com/qr-codes-as-attack-vector/
+// MITRE ATT&CK: T1204, T1105 (Ingress Tool Transfer)
+// False Positive Sensitivity: Medium (developers/testers may download APKs)
+
+DeviceNetworkEvents
+| where TimeGenerated > ago(7d)
+| where ActionType == "ConnectionSuccess"
+| where RemoteUrl endswith ".apk" or tostring(AdditionalFields) has ".apk"
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName,
+          InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, Protocol, ReportId
+| extend HostCustomEntity = DeviceName, AccountCustomEntity = InitiatingProcessAccountName
