@@ -1,0 +1,8 @@
+//Masquerading: “moonrise-client.exe” execution or reference related to Moonrise RAT
+DeviceProcessEvents
+| where TimeGenerated > ago(24h)
+| where FileName in~ ("moonrise-client.exe", "moonrise.exe", "moonriseclient.exe")
+   or ProcessCommandLine has_any ("moonrise-client.exe", "moonriseclient.exe", "moonrise.exe")
+| project TimeGenerated, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine,
+          InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, SHA256, ReportId
+| extend HostCustomEntity = DeviceName, AccountCustomEntity = AccountName
