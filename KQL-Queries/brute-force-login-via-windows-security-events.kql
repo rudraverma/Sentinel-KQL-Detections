@@ -1,0 +1,22 @@
+// Detection: Brute Force Login via Windows Security Events
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1110.001 - Brute Force: Password Guessing
+
+let threshold = 10;
+let timeWindow = 15m;
+SecurityEvent
+| where TimeGenerated > ago(1h)
+| where EventID == 4625
+| where AccountType == "User"
+| summarize
+    FailedAttempts   = count(),
+    DistinctAccounts = dcount(TargetUserName),
+    Accounts         = make_set(TargetUserName, 10),
+    FirstAttempt     = min(TimeGenerated),
+    LastAttempt      = max(TimeGenerated)
+    by IpAddress, Computer, bin(TimeGenerated, timeWindow)
+| where FailedAttempts >= threshold
+| extend AlertDescription = "Multiple failed login attempts — potential brute force attack"
+| project-reorder TimeGenerated, IpAddress, Computer,
+                  FailedAttempts, DistinctAccounts, Accounts,
+                  FirstAttempt, LastAttempt, AlertDescription
