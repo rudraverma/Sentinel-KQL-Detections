@@ -1,0 +1,29 @@
+// Detection: Impossible Travel - Sign-ins from geographically impossible locations
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1078 - Valid Accounts
+
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where ResultType == "0"
+| where isnotempty(IPAddress)
+| extend
+    City    = tostring(LocationDetails.city),
+    Country = tostring(LocationDetails.countryOrRegion)
+| project TimeGenerated, UserPrincipalName, IPAddress, City, Country
+| sort by UserPrincipalName asc, TimeGenerated asc
+| serialize
+| extend
+    PrevTime    = prev(TimeGenerated, 1),
+    PrevCountry = prev(Country, 1),
+    PrevUser    = prev(UserPrincipalName, 1)
+| where UserPrincipalName == PrevUser
+| extend TimeDiffMin = datetime_diff('minute', TimeGenerated, PrevTime)
+| where TimeDiffMin < 120
+    and Country != PrevCountry
+    and isnotempty(PrevCountry)
+| extend AlertDescription = strcat(
+    "User signed in from ", PrevCountry,
+    " then ", Country,
+    " within ", TimeDiffMin, " minutes — Impossible Travel")
+| project TimeGenerated, UserPrincipalName, IPAddress,
+          Country, PrevCountry, TimeDiffMin, AlertDescription
