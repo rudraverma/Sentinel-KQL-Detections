@@ -1,0 +1,25 @@
+// Detection: Port Scan - Single Host Hitting Many Ports/Hosts
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1046 - Network Service Discovery
+
+let timeWindow    = 10m;
+let portThreshold = 20;
+DeviceNetworkEvents
+| where TimeGenerated > ago(1h)
+| where ActionType in (
+    "ConnectionAttempt","ConnectionFailed","ConnectionRequest"
+)
+| summarize
+    UniqueRemotePorts = dcount(RemotePort),
+    UniqueRemoteIPs   = dcount(RemoteIP),
+    RemotePortList    = make_set(RemotePort, 30),
+    RemoteIPList      = make_set(RemoteIP, 10),
+    AttemptCount      = count()
+    by DeviceName, LocalIP, InitiatingProcessFileName,
+       bin(TimeGenerated, timeWindow)
+| where UniqueRemotePorts >= portThreshold
+    or UniqueRemoteIPs >= 25
+| extend AlertDescription = strcat(
+    "Potential port scan from ", LocalIP,
+    " targeting ", UniqueRemotePorts, " ports on ",
+    UniqueRemoteIPs, " hosts")
