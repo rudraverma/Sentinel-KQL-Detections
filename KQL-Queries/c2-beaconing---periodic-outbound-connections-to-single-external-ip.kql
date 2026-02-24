@@ -1,0 +1,25 @@
+// Detection: C2 Beaconing - Periodic Outbound Connections to Single External IP
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1071.001 - Application Layer Protocol: Web Protocols
+
+let connectionThreshold = 20;
+DeviceNetworkEvents
+| where TimeGenerated > ago(24h)
+| where ActionType == "ConnectionSuccess"
+| where RemoteIPType == "Public"
+| where RemotePort in (80, 443, 8080, 8443, 4444, 5555, 8888, 9001)
+| summarize
+    ConnectionCount = count(),
+    FirstSeen       = min(TimeGenerated),
+    LastSeen        = max(TimeGenerated),
+    PortList        = make_set(RemotePort, 5)
+    by DeviceName, RemoteIP, InitiatingProcessFileName, bin(TimeGenerated, 1h)
+| where ConnectionCount >= connectionThreshold
+| extend DurationMin = datetime_diff('minute', LastSeen, FirstSeen)
+| extend AlertDescription = strcat(
+    "'", InitiatingProcessFileName, "' made ",
+    ConnectionCount, " connections to ", RemoteIP,
+    " in 1 hour — potential C2 beaconing behavior")
+| project-reorder TimeGenerated, DeviceName, RemoteIP,
+                  InitiatingProcessFileName, ConnectionCount,
+                  DurationMin, PortList, AlertDescription
