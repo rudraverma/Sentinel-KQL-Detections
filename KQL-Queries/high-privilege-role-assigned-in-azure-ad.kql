@@ -1,0 +1,36 @@
+// Detection: High-Privilege Role Assigned in Azure AD
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1098.003 - Additional Cloud Roles
+
+let privilegedRoles = dynamic([
+    "Global Administrator","Privileged Role Administrator",
+    "Security Administrator","Conditional Access Administrator",
+    "Exchange Administrator","Application Administrator",
+    "Cloud Application Administrator","User Administrator",
+    "SharePoint Administrator","Hybrid Identity Administrator"
+]);
+AuditLogs
+| where TimeGenerated > ago(1d)
+| where OperationName has_any (
+    "Add member to role",
+    "Add eligible member to role",
+    "Add scoped member to role"
+)
+| where Result =~ "success"
+| mv-apply TargetResource = TargetResources on (
+    where TargetResource.type =~ "User"
+    | extend TargetUser = tostring(TargetResource.userPrincipalName)
+)
+| mv-apply ModProp = TargetResources[0].modifiedProperties on (
+    where ModProp.displayName =~ "Role.DisplayName"
+    | extend RoleAdded = tostring(ModProp.newValue)
+)
+| where RoleAdded has_any (privilegedRoles)
+| extend
+    InitiatingUser = tostring(InitiatedBy.user.userPrincipalName),
+    InitiatingIP   = tostring(InitiatedBy.user.ipAddress)
+| project TimeGenerated, OperationName, TargetUser,
+          RoleAdded, InitiatingUser, InitiatingIP, CorrelationId
+| extend AlertDescription = strcat(
+    "Privileged role '", RoleAdded,
+    "' assigned to '", TargetUser, "' by '", InitiatingUser, "'")
