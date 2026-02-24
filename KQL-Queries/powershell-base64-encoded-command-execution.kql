@@ -1,0 +1,20 @@
+// Detection: PowerShell Base64 Encoded Command Execution
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1059.001 - PowerShell
+
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("powershell.exe", "pwsh.exe")
+| where ProcessCommandLine has_any (
+    "-EncodedCommand","-enc ","-ec ",
+    "-EnC","-eNc","-e ","-eN"
+)
+| extend
+    ParentProcess = InitiatingProcessFileName,
+    User          = AccountName,
+    Domain        = AccountDomain
+| project TimeGenerated, DeviceName, FileName,
+          ProcessCommandLine, ParentProcess,
+          User, Domain, InitiatingProcessCommandLine, SHA256
+| extend AlertDescription =
+    "PowerShell with Base64 encoded argument detected — potential obfuscated payload delivery"
