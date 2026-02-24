@@ -1,0 +1,19 @@
+// Detection: MFA Push Fatigue - Repeated MFA Challenges to Same User
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1621 - Multi-Factor Authentication Request Generation
+
+let timeWindow       = 30m;
+let mfaFailThreshold = 5;
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where ResultType in ("50074","50076","50140","500121","50095","53003")
+| summarize
+    MFAChallenges = count(),
+    IPAddresses   = make_set(IPAddress, 10),
+    Apps          = make_set(AppDisplayName, 5),
+    Countries     = make_set(tostring(LocationDetails.countryOrRegion), 5)
+    by UserPrincipalName, bin(TimeGenerated, timeWindow)
+| where MFAChallenges >= mfaFailThreshold
+| extend AlertDescription = strcat(
+    "User '", UserPrincipalName, "' received ",
+    MFAChallenges, " MFA challenges in 30 min — potential push fatigue attack")
