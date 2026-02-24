@@ -1,0 +1,27 @@
+// Detection: Suspicious Process Connecting on Non-Standard External Port
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1571 - Non-Standard Port
+
+let standardPorts = dynamic([
+    80, 443, 8080, 8443, 53, 25, 587, 465, 110,
+    995, 143, 993, 21, 22, 3389, 5985, 5986, 123, 389, 636
+]);
+let suspiciousProcs = dynamic([
+    "powershell.exe","cmd.exe","wscript.exe","cscript.exe",
+    "mshta.exe","rundll32.exe","regsvr32.exe","certutil.exe",
+    "bitsadmin.exe","nc.exe","ncat.exe","nmap.exe"
+]);
+DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where ActionType == "ConnectionSuccess"
+| where RemoteIPType == "Public"
+| where RemotePort !in (standardPorts)
+| where RemotePort between (1 .. 65535)
+| where InitiatingProcessFileName has_any (suspiciousProcs)
+| project TimeGenerated, DeviceName, LocalIP,
+          RemoteIP, RemotePort, RemoteUrl,
+          InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| extend AlertDescription = strcat(
+    "'", InitiatingProcessFileName,
+    "' connecting externally on non-standard port ", RemotePort,
+    " — potential C2/exfil channel")
