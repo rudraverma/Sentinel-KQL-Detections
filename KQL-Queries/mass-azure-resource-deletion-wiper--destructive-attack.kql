@@ -1,0 +1,22 @@
+// Detection: Mass Azure Resource Deletion (Wiper / Destructive Attack)
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1485 - Data Destruction
+
+let timeWindow        = 30m;
+let deletionThreshold = 5;
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where OperationNameValue has "delete"
+| where ActivityStatusValue =~ "Success"
+| summarize
+    DeleteCount      = count(),
+    DeletedResources = make_set(OperationNameValue, 20),
+    ResourceGroups   = make_set(ResourceGroup, 10),
+    Subscriptions    = make_set(SubscriptionId, 5)
+    by Caller, CallerIpAddress, bin(TimeGenerated, timeWindow)
+| where DeleteCount >= deletionThreshold
+| extend AlertDescription = strcat(
+    "User '", Caller, "' performed ",
+    DeleteCount, " Azure resource deletions within 30 minutes — potential destructive activity")
+| project-reorder TimeGenerated, Caller, CallerIpAddress,
+                  DeleteCount, DeletedResources, ResourceGroups
