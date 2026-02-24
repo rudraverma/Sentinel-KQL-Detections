@@ -1,0 +1,25 @@
+// Detection: DNS Tunneling - High Volume + Long Subdomains
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1048.003 - Exfiltration Over Unencrypted Protocol
+
+let timeWindow        = 10m;
+let queryCountThreshold = 100;
+let subdomainLenThreshold = 30;
+DeviceNetworkEvents
+| where TimeGenerated > ago(1h)
+| where ActionType == "DnsConnectionInspected"
+| where isnotempty(RemoteUrl)
+| extend DomainParts    = split(RemoteUrl, ".")
+| extend SubdomainLength = strlen(tostring(DomainParts[0]))
+| where SubdomainLength > subdomainLenThreshold
+| summarize
+    QueryCount     = count(),
+    UniqueDomains  = dcount(RemoteUrl),
+    SampleDomains  = make_set(RemoteUrl, 10),
+    AvgSubdomainLen = avg(SubdomainLength)
+    by DeviceName, InitiatingProcessFileName, bin(TimeGenerated, timeWindow)
+| where QueryCount >= queryCountThreshold or UniqueDomains > 50
+| extend AlertDescription = strcat(
+    "High-volume DNS queries with long subdomains from '",
+    InitiatingProcessFileName, "' on ", DeviceName,
+    " — potential DNS tunneling/exfil")
