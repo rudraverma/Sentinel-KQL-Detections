@@ -1,0 +1,32 @@
+// Detection: Device Connected to Known Malicious IP (TI Feed Match)
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1071 - Application Layer Protocol
+
+let TIWindow    = ago(14d);
+let EventWindow = ago(1d);
+let TI =
+    ThreatIntelligenceIndicator
+    | where TimeGenerated >= TIWindow
+    | where Active == true
+    | where isnotempty(NetworkIP)
+    | where ExpirationDateTime > now()
+    | where ConfidenceScore > 50
+    | summarize LatestTI = max(TimeGenerated)
+        by NetworkIP, ThreatType, ConfidenceScore;
+DeviceNetworkEvents
+| where TimeGenerated >= EventWindow
+| where ActionType in ("ConnectionSuccess","ConnectionRequest")
+| join kind=inner TI on $left.RemoteIP == $right.NetworkIP
+| project
+    TimeGenerated,
+    DeviceName,
+    RemoteIP,
+    RemotePort,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    ThreatType,
+    ConfidenceScore
+| extend AlertDescription = strcat(
+    "Connection to known malicious IP ", RemoteIP,
+    " [ThreatType: ", ThreatType,
+    " | Confidence: ", ConfidenceScore, "]")
