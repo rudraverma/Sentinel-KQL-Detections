@@ -1,0 +1,29 @@
+// Detection: MFA Disabled or Strong Authentication Removed
+// Author: Rudra Verma - CyberHawk Threat Intel
+// MITRE ATT&CK: T1556 - Modify Authentication Process
+
+AuditLogs
+| where TimeGenerated > ago(1d)
+| where OperationName has_any (
+    "Disable Strong Authentication",
+    "Update user",
+    "Update StsRefreshTokensValidFrom",
+    "Admin registered security info",
+    "Admin deleted security info"
+)
+| where Result =~ "success"
+| extend
+    TargetUser    = tostring(TargetResources[0].userPrincipalName),
+    InitiatingUser = tostring(InitiatedBy.user.userPrincipalName),
+    InitiatingApp  = tostring(InitiatedBy.app.displayName),
+    InitiatingIP   = tostring(iff(
+        isnotempty(InitiatedBy.user.ipAddress),
+        InitiatedBy.user.ipAddress,
+        InitiatedBy.app.ipAddress
+    ))
+| where isnotempty(TargetUser)
+| project TimeGenerated, OperationName, TargetUser,
+          InitiatingUser, InitiatingApp, InitiatingIP,
+          Result, CorrelationId
+| extend AlertDescription =
+    "MFA or strong authentication disabled for a user account — verify legitimacy"
