@@ -1,0 +1,10 @@
+//Outbound connection to known Moonrise C2
+let C2_IPs = dynamic(["193.23.199.88"]);
+DeviceNetworkEvents
+| where TimeGenerated > ago(1h)
+| where RemoteIP in (C2_IPs)
+| where ActionType in ("ConnectionSuccess", "InboundConnectionAccepted", "ConnectionAttempt")
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName,
+          InitiatingProcessFolderPath, InitiatingProcessCommandLine,
+          RemoteIP, RemotePort, Protocol, ReportId
+| extend HostCustomEntity = DeviceName, IPAddressCustomEntity = RemoteIP, AccountCustomEntity = InitiatingProcessAccountName
