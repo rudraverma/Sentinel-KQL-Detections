@@ -1,0 +1,14 @@
+// Author- Rudra Verma CyberHawk
+// Intel link:- https://www.cyberhawkthreatintel.com/blog/intune-as-a-weapon-detecting-mass-device-wipe-attacks
+//Check for new privileged role assignments around the wipe window — key Stryker TTP:
+
+AuditLogs
+| where TimeGenerated > ago(7d)
+| where OperationName in ("Add member to role", "Add user")
+| extend ActorUPN    = tostring(InitiatedBy.user.userPrincipalName)
+| extend TargetUPN   = tostring(TargetResources[0].userPrincipalName)
+| extend RoleAssigned = tostring(TargetResources[0].modifiedProperties[0].newValue)
+| where RoleAssigned has_any ("Global Administrator", "Intune Administrator",
+                               "Cloud Device Administrator")
+| project TimeGenerated, ActorUPN, TargetUPN, RoleAssigned
+| order by TimeGenerated desc
