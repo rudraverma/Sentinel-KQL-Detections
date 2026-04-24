@@ -1,0 +1,10 @@
+// Author- Rudra Verma CyberHawk
+// Intel link:- https://www.cyberhawkthreatintel.com/blog/intune-as-a-weapon-detecting-mass-device-wipe-attacks
+//Check for suspicious sign-in activity on the actor account immediately before the wipe window:
+
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where UserPrincipalName == "<ActorUPN from alert>"
+| project TimeGenerated, IPAddress, Location, AppDisplayName,
+          ResultType, RiskLevelDuringSignIn, ConditionalAccessStatus
+| order by TimeGenerated desc
