@@ -1,0 +1,19 @@
+// Author- Rudra Verma CyberHawk
+// Intel link:- https://www.cyberhawkthreatintel.com/blog/intune-as-a-weapon-detecting-mass-device-wipe-attacks
+//Scope affected devices and identify any executive or privileged user devices:
+
+let WipedDevices =
+    IntuneAuditLogs
+    | where TimeGenerated > ago(24h)
+    | where OperationName in~ ("wipe ManagedDevice", "Delete ManagedDevice")
+    | extend ActorUPN = tostring(todynamic(Properties).Actor.UPN)
+    | extend DeviceId = tostring(todynamic(Properties).TargetObjectIds[0])
+    | where ActorUPN == "<ActorUPN from alert>"
+    | distinct DeviceId;
+WipedDevices
+| join kind=inner (
+    IntuneDevices
+    | summarize arg_max(TimeGenerated, *) by DeviceId
+    | project DeviceId, DeviceName, UPN, UserEmail, OS, Ownership
+) on DeviceId
+| order by Ownership asc
