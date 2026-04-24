@@ -1,0 +1,12 @@
+// Author- Rudra Verma CyberHawk
+// Intel link:- https://www.cyberhawkthreatintel.com/blog/intune-as-a-weapon-detecting-mass-device-wipe-attacks
+//Confirm wipe events are genuine and successful:
+
+IntuneAuditLogs
+| where TimeGenerated > ago(24h)
+| where OperationName in~ ("wipe ManagedDevice", "Delete ManagedDevice")
+| extend ActorUPN = tostring(todynamic(Properties).Actor.UPN)
+| extend DeviceId = tostring(todynamic(Properties).TargetObjectIds[0])
+| where ActorUPN == "<ActorUPN from alert>"
+| project TimeGenerated, OperationName, ResultType, ResultDescription, DeviceId, CorrelationId
+| order by TimeGenerated asc
