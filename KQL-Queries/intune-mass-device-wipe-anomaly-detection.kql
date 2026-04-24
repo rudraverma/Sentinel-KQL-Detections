@@ -1,0 +1,194 @@
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Author- Rudra Verma CyberHawk
+// Intel link:- https://www.cyberhawkthreatintel.com/blog/intune-as-a-weapon-detecting-mass-device-wipe-attacks
+// STAGE 1 — Build per-actor historical wipe activity
+// Window: ago(14d) to ago(24h) — strictly excludes the detection window
+// Only days where a wipe occurred are included (zero-wipe days are absent by
+// design — this keeps the mean and stdev honest to actual wipe behaviour)
+// ─────────────────────────────────────────────────────────────────────────────
+let HistoricalDailyWipes =
+    IntuneAuditLogs
+    | where TimeGenerated between (ago(14d) .. ago(24h))
+    | where OperationName in~ ("wipe ManagedDevice", "Delete ManagedDevice")
+    // TUNING: Add or remove OperationName values here if your tenant logs
+    // additional wipe variants — run: IntuneAuditLogs | distinct OperationName
+    // | where OperationName has_any ("wipe","delete","retire") to verify
+    | extend ActorUPN = tostring(todynamic(Properties).Actor.UPN)
+    | where isnotempty(ActorUPN) and ActorUPN !in~ ("unknown", "system", "")
+    // TUNING: Add known automation/service account UPNs to the exclusion list
+    // above if they generate expected high-volume wipes (e.g. MDM automation)
+    | summarize DailyCount = count()
+        by ActorUPN, Day = bin(TimeGenerated, 1d);
+let ActorBaseline =
+    HistoricalDailyWipes
+    | summarize
+        HistMean   = round(avg(DailyCount), 2),
+        HistStdev  = round(stdev(DailyCount), 2),
+        HistMax    = max(DailyCount),   // personal peak — used by Pattern C fallback
+        ActiveDays = count(),           // drives HasReliableBaseline gate below
+        Total14d   = sum(DailyCount)    // renamed from Total30d — baseline is now 14d
+        by ActorUPN;
+let RecentWipeEvents =
+    IntuneAuditLogs
+    | where TimeGenerated > ago(24h)
+    // TUNING: Detection window — increase to ago(48h) if your rule runs less
+    // frequently than hourly, but align with Sentinel rule query period setting
+    | where OperationName in~ ("wipe ManagedDevice", "Delete ManagedDevice")
+    | extend ActorUPN   = tostring(todynamic(Properties).Actor.UPN)
+    | extend DeviceId   = tostring(todynamic(Properties).TargetObjectIds[0])
+    // TargetObjectIds[0] confirmed as the AzureADDeviceId join key via precheck
+    | extend DeviceName = tostring(todynamic(Properties).TargetDisplayNames)
+    | where isnotempty(ActorUPN) and ActorUPN !in~ ("unknown", "system", "")
+    | join kind=leftouter (
+        IntuneDevices
+        | summarize arg_max(TimeGenerated, *) by DeviceId
+        | project DeviceId,
+                  InvDeviceName  = DeviceName,
+                  OwnerUPN       = UPN,
+                  OwnerEmail     = UserEmail,
+                  DeviceOS       = OS,
+                  Ownership,
+                  ManagedBy,
+                  CompliantState,
+                  JoinType
+    ) on DeviceId;
+let TodayActivity =
+    RecentWipeEvents
+    | summarize
+        TodayCount          = count(),
+        DeviceIds           = make_set(DeviceId, 1000),
+        // TUNING: Raise DeviceIds cap only if you need full device ID list in
+        // the alert output for tenants expected to exceed 1000 corp devices
+        DeviceNames         = make_set(InvDeviceName),
+        AffectedOwnerUPNs   = make_set(OwnerUPN),
+        AffectedOwnerEmails = make_set(OwnerEmail),
+        OSTypes             = make_set(DeviceOS),
+        OwnershipTypes      = make_set(Ownership),
+        Operations          = make_set(OperationName),
+        FirstAction         = min(TimeGenerated),
+        LastAction          = max(TimeGenerated)
+        by ActorUPN;
+TodayActivity
+| join kind=leftouter ActorBaseline on ActorUPN
+// Null normalisation — actors with zero 14d wipe history produce nulls on join
+| extend
+    HistMean   = iff(isnull(HistMean),   0.0, HistMean),
+    HistStdev  = iff(isnull(HistStdev),  0.0, HistStdev),
+    HistMax    = iff(isnull(HistMax),    0,   HistMax),
+    ActiveDays = iff(isnull(ActiveDays), 0,   ActiveDays),
+    Total14d   = iff(isnull(Total14d),   0,   Total14d)
+| extend
+    IsNewActor          = (ActiveDays == 0),
+    // HasReliableBaseline gates Z-score usage — stdev is statistically
+    // unreliable below 5 active days, so Pattern C (peak deviation) is used
+    // as the fallback for thin-history actors (1–4 active days)
+    HasReliableBaseline = (ActiveDays >= 5 and HistStdev > 0)
+    // TUNING: Raise ActiveDays threshold (e.g. to 10) for stricter baseline
+    // reliability if your tenant has many irregular/seasonal admins
+| extend
+    // Z-score: standard deviations above personal mean
+    // Only computed when baseline is reliable — returns 0 otherwise
+    ZScore          = iff(HasReliableBaseline,
+                          round((toreal(TodayCount) - HistMean) / HistStdev, 2),
+                          toreal(0)),
+    // DeviationVsPeak: how many times today's count exceeds the actor's
+    // personal 14d peak — used for Pattern C thin-history fallback
+    // Returns raw TodayCount as the signal when actor has no history (HistMax=0)
+    DeviationVsPeak = iff(HistMax > 0,
+                          round(toreal(TodayCount) / toreal(HistMax), 2),
+                          toreal(TodayCount)),
+    ActiveWindowMins = toreal(max_of(datetime_diff('minute', LastAction, FirstAction), 1))
+    // ActiveWindowMins floored at 1 to prevent division by zero when
+    // FirstAction == LastAction (single event or same-second events)
+| extend
+    // BurstRate suppressed to 0 for single-event actors — WipesPerHour is
+    // mathematically meaningless with one data point due to the 1-min floor
+    WipesPerHour = iff(TodayCount > 1,
+                       round((toreal(TodayCount) / ActiveWindowMins) * 60.0, 1),
+                       toreal(0)),
+    DeviceCount  = array_length(DeviceIds)
+// ─────────────────────────────────────────────────────────────────────────────
+// STAGE 6 — Detection filter — this is main place if NSOC needs to add tuning for FPs
+// Four independent patterns — any single match fires the alert
+// All thresholds are relative to actor history, not fleet size (multi-tenant safe)
+// ─────────────────────────────────────────────────────────────────────────────
+| where
+    // PATTERN A — First-time wiper with mass volume
+    // Covers: compromised account, rogue admin, freshly provisioned attacker account
+    // TUNING: Raise TodayCount gate (e.g. 20) to reduce sensitivity in tenants
+    // where new admins routinely onboard multiple devices on day one
+    (IsNewActor == true and TodayCount >= 10)
+    // PATTERN B — Known actor statistically far above their own norm
+    // Z >= 3.0 means today's activity would occur by chance less than 0.3% of
+    // the time given this actor's own historical distribution
+    // TUNING: Raise ZScore threshold to 4.0 or 5.0 to reduce sensitivity;
+    // raise TodayCount gate if low-volume tenants produce noise here
+    or (HasReliableBaseline == true and ZScore >= 3.0 and TodayCount >= 5)
+    // PATTERN C — Thin-history fallback (1–4 active days, stdev unreliable)
+    // Uses peak deviation instead of Z-score — fires when today exceeds the
+    // actor's personal historical peak by 3x or more
+    // TUNING: Raise DeviationVsPeak (e.g. 5.0) if admins in this tenant
+    // legitimately have highly irregular wipe patterns
+    or (HasReliableBaseline == false and IsNewActor == false
+        and DeviationVsPeak >= 3.0 and TodayCount >= 10)
+    // PATTERN D — Time-compressed burst
+    // Fires on rate regardless of history — catches attacks that complete
+    // before the statistical patterns accumulate enough signal
+    // TUNING: Raise WipesPerHour (e.g. 50) for large IT teams doing scripted
+    // bulk device lifecycle operations on a regular schedule
+    or (WipesPerHour >= 20.0 and TodayCount >= 15)
+| extend Severity = case(
+    // Volume or rate at mass-wipe scale
+    TodayCount >= 100 or WipesPerHour >= 100, "Critical",
+    // High volume or statistically extreme deviation
+    TodayCount >= 50  or WipesPerHour >= 50,  "High",
+    // Confirmed statistical anomaly or sustained burst rate
+    ZScore >= 5.0     or WipesPerHour >= 20,  "High",
+    // Moderate volume or Z-score at detection threshold
+    TodayCount >= 20  or ZScore >= 3.0,       "Medium",
+    // Passed a detection gate but volume and rate are low
+    "Low")
+| extend AlertReason = case(
+    // Burst rate above critical threshold — rate evaluated first regardless of other signals
+    WipesPerHour >= 100,
+        strcat("CRITICAL burst: ", tostring(WipesPerHour), " wipes/hr"),
+    // Actor has zero wipe history in 14d — Pattern A fired
+    IsNewActor == true and TodayCount >= 10,
+        strcat("First-time wiper: ", tostring(TodayCount), " devices wiped, zero 14d history"),
+    // Actor baseline is reliable and today is 3σ+ above their own mean — Pattern B fired
+    HasReliableBaseline == true and ZScore >= 3.0,
+        strcat("Z-score +", tostring(ZScore), "σ above personal mean (",
+               tostring(HistMean), "/day avg over ", tostring(ActiveDays), " active days)"),
+    // Actor exceeded their personal historical peak by 3x — Pattern C fired
+    DeviationVsPeak >= 3.0,
+        strcat(tostring(DeviationVsPeak), "x above personal peak (historical max: ",
+               tostring(HistMax), "/day)"),
+    // Time-compressed wipe rate below critical threshold — Pattern D fired
+    WipesPerHour >= 20.0,
+        strcat("Burst rate: ", tostring(WipesPerHour), " wipes/hr in ",
+               tostring(round(ActiveWindowMins, 0)), " min window"),
+    // More than one pattern fired — check individual signal columns for detail
+    "Combined anomaly signal")
+| project
+    WipeWindow_Start         = FirstAction,
+    WipeWindow_End           = LastAction,
+    ActorUPN,
+    Severity,
+    AlertReason,
+    Wipes_Last24h            = TodayCount,
+    BurstRate_PerHour        = WipesPerHour,
+    ZScore_SigmaAboveMean    = ZScore,
+    PeakDeviation_Multiplier = DeviationVsPeak,
+    Baseline_DailyMean       = HistMean,
+    Baseline_DailyPeak       = HistMax,
+    Baseline_ActiveDays_14d  = ActiveDays,
+    Baseline_IsReliable      = HasReliableBaseline,
+    IsFirstTimeWiper         = IsNewActor,
+    UniqueDevices_Affected   = DeviceCount,
+    AffectedDevice_Names     = DeviceNames,
+    DeviceOwner_UPNs         = AffectedOwnerUPNs,
+    Affected_OSTypes         = OSTypes,
+    Device_OwnershipTypes    = OwnershipTypes,
+    Intune_Operations        = Operations
+| sort by Wipes_Last24h desc
