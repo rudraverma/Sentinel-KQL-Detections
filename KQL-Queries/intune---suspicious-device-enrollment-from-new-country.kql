@@ -1,0 +1,131 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// DETECTION  : Intune — Suspicious Device Enrollment from New Country
+// Author   : Rudra Verma - CyberHawk
+// Schedule   : Run every 1h, lookback 24h, threshold > 0
+// Tables     : AADNonInteractiveUserSignInLogs
+// MITRE      : T1078.004 (Valid Accounts: Cloud Accounts)
+//              T1098 (Account Manipulation)
+// Logic      : Fires when a user attempts to enrol a device via Company Portal
+//              from a country not seen in their personal 7-day sign-in baseline.
+//              Two patterns: successful sustained session (High) or CAP blocked
+//              attempt (Medium). Covers identity theft → device enrolment TTP.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Stage 1 — Build per-user historical sign-in country baseline
+// Window: ago(7d) to ago(24h) — excludes detection window entirely
+// Only successful sign-ins used — failed attempts do not represent real locations
+// TUNING: Extend to ago(14d) if users regularly travel and generate FPs —
+//         note Sentinel analytics rule hard cap is 14d lookback maximum
+let HistoricalCountries =
+    AADNonInteractiveUserSignInLogs
+    | where TimeGenerated between (ago(7d) .. ago(24h))
+    | where ResultType == 0
+    | where isnotempty(UserPrincipalName) and isnotempty(Location)
+    | summarize HistoricalCountries = make_set(Location, 20)
+        by UserPrincipalName;
+
+// Stage 2 — Enrollment app sign-ins in detection window
+// App filter covers all Company Portal variants confirmed in this tenant
+// TUNING: Run the following to verify app names in your tenant:
+//   AADNonInteractiveUserSignInLogs
+//   | where TimeGenerated > ago(7d)
+//   | where AppDisplayName has "Portal" or AppDisplayName has "Intune"
+//   | distinct AppDisplayName
+// TUNING: Add or remove app names here if new enrollment apps appear in tenant
+AADNonInteractiveUserSignInLogs
+| where TimeGenerated > ago(24h)
+| where AppDisplayName has_any ("Company Portal",
+                                "Intune Company Portal",
+                                "Microsoft Intune Company Portal")
+| where isnotempty(UserPrincipalName) and isnotempty(Location)
+// Classify result codes for analyst readability in output
+| extend ResultContext = case(
+    ResultType == 0,     "Success",
+    ResultType == 53003, "CAP Blocked",
+    ResultType == 50097, "Device Auth Required",
+    strcat("Code: ", tostring(ResultType)))
+// Aggregate per user per country per app — one row per unique combination
+| summarize
+    AttemptCount  = count(),
+    // SuccessCount: background token refreshes vs sustained active session
+    // TUNING: Raise gate (e.g. 10) if legitimate travelling users generate
+    //         FPs — higher value = fewer alerts, lower sensitivity
+    SuccessCount  = countif(ResultType == 0),
+    // BlockedCount: CAP blocked attempts — attacker probing with stolen creds
+    // Any blocked attempt from a new country is worth investigating
+    BlockedCount  = countif(ResultType == 53003),
+    IPAddresses   = make_set(IPAddress, 10),
+    ResultCodes   = make_set(ResultContext, 5),
+    FirstAttempt  = min(TimeGenerated),
+    LastAttempt   = max(TimeGenerated)
+    by UserPrincipalName, Location, AppDisplayName
+
+// Stage 3 — Join per-user baseline to compute new country signal
+| join kind=leftouter HistoricalCountries
+    on UserPrincipalName
+// Null normalisation — users with no 7d sign-in history produce nulls on join
+// These users are excluded from P2 by the array_length > 0 guard below
+| extend HistoricalCountries = iff(
+    isnull(HistoricalCountries), dynamic([]), HistoricalCountries)
+| extend IsNewCountry = (
+    // Country not seen in user's personal 7d baseline
+    not(set_has_element(HistoricalCountries, Location))
+    and isnotempty(Location)
+    // Exclude users with no baseline — avoids FPs for brand new accounts
+    // TUNING: Remove array_length guard to also alert on new accounts
+    and array_length(HistoricalCountries) > 0)
+
+// Stage 4 — Detection filter
+// Two independent patterns — either fires the alert
+| where IsNewCountry == true
+| where
+    // Pattern 1 — Sustained successful session from new country
+    // 5+ successes indicates active session not background token refresh
+    // TUNING: Raise to 10 for orgs with frequent legitimate traveller FPs
+    SuccessCount >= 5
+    // Pattern 2 — CAP blocked enrollment attempt from new country
+    // Any block from a new country is worth investigating regardless of count
+    // TUNING: Add minimum attempt count (e.g. BlockedCount >= 2) if single
+    //         blocked attempts from new countries are generating noise
+    or BlockedCount > 0
+
+// Stage 5 — Severity classification
+// High: attacker has active session — may have already enrolled a device
+// Medium: attacker probing but stopped by CAP — no device enrolled yet
+| extend Severity = case(
+    SuccessCount >= 5, "High",
+    BlockedCount > 0,  "Medium",
+    "Low")
+
+// Stage 6 — Human readable alert reason
+| extend AlertReason = case(
+    SuccessCount >= 5,
+        strcat("Sustained session: ", tostring(SuccessCount),
+               " successful sign-ins to [", AppDisplayName,
+               "] from new country [", Location,
+               "] — possible device enrolled — baseline: ",
+               tostring(HistoricalCountries)),
+    BlockedCount > 0,
+        strcat("CAP blocked enrollment attempt from new country [",
+               Location, "] via [", AppDisplayName,
+               "] — ", tostring(AttemptCount),
+               " attempts — baseline: ", tostring(HistoricalCountries)),
+    "Signal detected")
+
+// Stage 7 — Final output columns
+| project
+    FirstAttempt,
+    LastAttempt,
+    UserPrincipalName,
+    Severity,
+    AlertReason,
+    SignInCountry           = Location,
+    AppDisplayName,
+    AttemptCount,
+    SuccessCount,
+    BlockedCount,
+    ResultCodes,
+    IPAddresses,
+    HistoricalCountries_7d  = HistoricalCountries,
+    IsNewCountry
+| sort by Severity desc, FirstAttempt desc
