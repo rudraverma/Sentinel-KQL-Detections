@@ -1,0 +1,126 @@
+// ============================================================================
+// Potential CVE-2026-45586 / GreenPlasma - Suspicious CTFMON Execution
+//
+// Data source: https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-45586
+// DeviceProcessEvents (Microsoft Defender for Endpoint process telemetry)
+// Author- Rudra Verma - CyberHawk Threat Intel
+// Scheduled-rule configuration:
+// - Run query every: 1 hour
+// - Lookup data from the last: 14 days
+//
+// Purpose:
+// Detect new, suspicious ctfmon.exe execution events based on a tenant-validated
+// baseline of normal CTFMON parent processes.
+//
+// Important:
+// - This is a supporting detection for CVE-2026-45586.
+// - It detects suspicious CTFMON execution lineage or binary masquerading.
+// - It does not directly detect Object Manager symbolic-link abuse or confirm
+//   exploitation.
+//
+// De-duplication:
+// The query searches up to 14 days of event time, but returns only events
+// ingested in the last hour. This prevents repeated alerts for old events when
+// the rule runs hourly with a 14-day lookup period.
+// ============================================================================
+
+let HistoricalLookback = 14d;
+let NewDataWindow = 1h;
+
+DeviceProcessEvents
+| where Timestamp >= ago(HistoricalLookback)
+
+// Return only newly ingested telemetry for this scheduled-rule execution.
+// This avoids re-alerting on the same process event every hour.
+| where ingestion_time() >= ago(NewDataWindow)
+
+| where FileName =~ "ctfmon.exe"
+| where isnotempty(InitiatingProcessFileName)
+
+// -----------------------------------------------------------------------------
+// Tenant-validated normal CTFMON launch patterns.
+// -----------------------------------------------------------------------------
+| extend IsExpected =
+    (
+        InitiatingProcessFileName =~ "svchost.exe"
+        and (
+            InitiatingProcessCommandLine has_any (
+                "TextInputManagementService",
+                "TabletInputService",
+                "LocalSystemNetworkRestricted",
+                "Appinfo"
+            )
+            or isempty(InitiatingProcessCommandLine)
+        )
+    )
+    or InitiatingProcessFileName in~ (
+        "explorer.exe",
+        "runonce.exe",
+        "shellappruntime.exe",
+        "taskhostw.exe",
+        "psr.exe",
+        "taskmgr.exe",
+        "conhost.exe"
+    )
+
+// Retain only CTFMON launches outside your validated baseline.
+| where IsExpected == false
+
+// FolderPath is the full image path in your Defender telemetry.
+| extend PathAnomaly =
+    tolower(FolderPath) != @"c:\windows\system32\ctfmon.exe"
+
+// Prioritise executable masquerading and high-risk launch mechanisms.
+| extend AlertSeverity = case(
+    PathAnomaly, "Critical",
+    InitiatingProcessFileName in~ (
+        "wscript.exe",
+        "cscript.exe",
+        "mshta.exe"
+    ), "High",
+    InitiatingProcessFileName in~ (
+        "cmd.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "rundll32.exe"
+    ), "Medium",
+    "Low"
+)
+
+| extend DetectionReason = case(
+    PathAnomaly,
+        "ctfmon.exe executed outside the legitimate C:\\Windows\\System32\\ctfmon.exe path",
+    InitiatingProcessFileName in~ (
+        "wscript.exe",
+        "cscript.exe",
+        "mshta.exe"
+    ),
+        "ctfmon.exe launched by a script host",
+    InitiatingProcessFileName in~ (
+        "cmd.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "rundll32.exe"
+    ),
+        "ctfmon.exe launched by a command interpreter or LOLBin",
+    "ctfmon.exe launched by an unapproved parent process"
+)
+
+| project
+    Timestamp,
+    DeviceName,
+    DeviceId,
+    AccountName,
+    AlertSeverity,
+    DetectionReason,
+    PathAnomaly,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessFolderPath,
+    InitiatingProcessCommandLine,
+    InitiatingProcessAccountName,
+    InitiatingProcessSHA1,
+    ReportId
+| order by Timestamp desc
